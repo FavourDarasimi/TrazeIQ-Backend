@@ -31,6 +31,9 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
+    "corsheaders",
+    "drf_spectacular",
     "apps.accounts",
     "apps.organizations",
     "apps.projects",
@@ -43,6 +46,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -92,7 +96,32 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # Default primary key field type
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Django REST Framework
+# Custom user model — email is the login identifier
+AUTH_USER_MODEL = "accounts.User"
+
+# ---- Auth / OTP ----
+# Refresh token lives in this httpOnly cookie; the access token is returned in
+# the response body AND mirrored into its own httpOnly cookie (sameSite=Lax),
+# so requests without an Authorization header still authenticate.
+AUTH_COOKIE_NAME = "trazeiq_refresh"
+AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+AUTH_COOKIE_SECURE = env.bool("AUTH_COOKIE_SECURE", default=False)
+AUTH_COOKIE_SAMESITE = env("AUTH_COOKIE_SAMESITE", default="Lax")
+
+AUTH_ACCESS_COOKIE_NAME = "trazeiq_access"
+AUTH_ACCESS_COOKIE_MAX_AGE = 15 * 60  # matches ACCESS_TOKEN_LIFETIME
+
+# When AUTH_DEV_OTP is set (e.g. "000000"), OTP verification accepts this code
+# for any user — dev/demo bypass until real email delivery is configured.
+AUTH_DEV_OTP = env("AUTH_DEV_OTP", default="")
+AUTH_OTP_TTL_MINUTES = env.int("AUTH_OTP_TTL_MINUTES", default=10)
+AUTH_OTP_MAX_ATTEMPTS = env.int("AUTH_OTP_MAX_ATTEMPTS", default=5)
+
+# ---- Google sign-in ----
+# Empty in dev: /auth/google/ runs in stub mode (no token verification).
+GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID", default="")
+
+# ---- Django REST Framework ----
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
@@ -100,4 +129,49 @@ REST_FRAMEWORK = {
     "DEFAULT_PARSER_CLASSES": [
         "rest_framework.parsers.JSONParser",
     ],
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "apps.accounts.authentication.AccessCookieJWTAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
+
+# ---- API documentation (Swagger / OpenAPI) ----
+# Exposed only where the environment opts in (dev by default, prod off).
+# See dev.py / prod.py.
+SPECTACULAR_SETTINGS = {
+    "TITLE": "TrazeIQ API",
+    "DESCRIPTION": (
+        "Detect. Understand. Fix. — the API powering TrazeIQ's incident "
+        "monitoring platform. Auth is cookie-based: sign in via the auth "
+        "endpoints, and the browser sends the httpOnly refresh cookie "
+        "(path `/api/v1/auth/`) plus the access cookie on every request. "
+        "Alternative flows use an `Authorization: Bearer <token>` header."
+    ),
+    "VERSION": "v1",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
+    "TAGS": [
+        {"name": "auth", "description": "Registration, verification, login and password recovery"},
+    ],
+}
+
+# ---- SimpleJWT ----
+from datetime import timedelta  # noqa: E402
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": False,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "UPDATE_LAST_LOGIN": True,
+}
+
+# ---- CORS (baseline — locked per-env, hardened again in Phase 5) ----
+CORS_ALLOWED_ORIGINS = env.list(
+    "DJANGO_CORS_ALLOWED_ORIGINS", default=["http://localhost:3000"]
+)
+CORS_ALLOW_CREDENTIALS = True  # refresh-token cookie flows
+CORS_ALLOW_ALL_ORIGINS = False

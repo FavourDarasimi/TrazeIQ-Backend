@@ -22,6 +22,10 @@ SECRET_KEY = env("DJANGO_SECRET_KEY", default="django-insecure-dev-only-do-not-u
 DEBUG = env.bool("DJANGO_DEBUG", default=False)
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=[])
 
+# HMAC key for API-key digests (projects). Falls back to SECRET_KEY when unset —
+# set it explicitly once projects exist in more than one environment.
+API_KEY_HASH_SECRET = env("API_KEY_HASH_SECRET", default="")
+
 # Application definition
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -187,6 +191,8 @@ SPECTACULAR_SETTINGS = {
     "COMPONENT_SPLIT_REQUEST": True,
     "TAGS": [
         {"name": "auth", "description": "Registration, verification, login and password recovery"},
+        {"name": "organizations", "description": "Tenant organizations and membership"},
+        {"name": "projects", "description": "Projects and their API keys"},
     ],
 }
 

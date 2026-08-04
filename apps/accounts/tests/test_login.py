@@ -22,7 +22,8 @@ class LoginTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["detail"], "email_not_verified")
+        self.assertEqual(response.data["success"], False)
+        self.assertEqual(response.data["error"]["code"], "EMAIL_NOT_VERIFIED")
 
     @override_settings(AUTH_DEV_OTP="000000")
     def test_login_after_verification_returns_tokens(self):
@@ -37,7 +38,8 @@ class LoginTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["success"], True)
         self.assertNotIn("access", response.data)
         self.assertIn("trazeiq_access", response.cookies)
         self.assertIn("trazeiq_refresh", response.cookies)
-        self.assertEqual(response.data["user"]["email_verified"], True)
+        self.assertEqual(response.data["data"]["user"]["email_verified"], True)

@@ -1,8 +1,21 @@
+from django.conf import settings
+from django.contrib.auth.signals import user_login_failed
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from axes.handlers.proxy import AxesProxyHandler
+
+from trazeiq_backend.responses import (
+    ErrorCode,
+    api_error,
+    api_success,
+    envelope_schema,
+)
+
+from .throttles import AuthScopedRateThrottle
 
 from .cookies import (
     clear_access_cookie,
@@ -12,8 +25,6 @@ from .cookies import (
     set_refresh_cookie,
 )
 from .serializers import (
-    AuthSessionSerializer,
-    DetailResponseSerializer,
     ForgotPasswordSerializer,
     GoogleAuthSerializer,
     LoginSerializer,
@@ -40,18 +51,39 @@ from .services import (
 class _AuthView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [AuthScopedRateThrottle]
+
+
+def _is_locked_out(request, email: str) -> bool:
+    """True when axes has locked this (IP, username) pair out of login."""
+    if not settings.AXES_ENABLED:
+        return False
+    # AXES_USERNAME_FORM_FIELD resolves to User.USERNAME_FIELD — "email" here.
+    return AxesProxyHandler.is_locked(request, credentials={"email": email})
+
+
+def _lockout_response() -> Response:
+    """Envelope-consistent 429 for a locked account."""
+    cooloff = getattr(settings, "AXES_COOLOFF_TIME", 0.25) * 3600
+    response = api_error(
+        ErrorCode.TOO_MANY_REQUESTS,
+        "Too many failed login attempts. Try again later.",
+        status=status.HTTP_429_TOO_MANY_REQUESTS,
+    )
+    response["Retry-After"] = str(int(cooloff))
+    return response
 
 
 def _signed_in_response(user) -> Response:
-    """Body carries the user; tokens ride in httpOnly cookies only."""
+    """Body carries ``data.user``; tokens ride in httpOnly cookies only."""
     tokens = tokens_for(user)
-    response = Response({"user": UserOutSerializer(user).data})
+    response = api_success(data={"user": UserOutSerializer(user).data})
     set_access_cookie(response, tokens["access"])
     set_refresh_cookie(response, tokens["refresh"])
     return response
 
 
-def _otp_error(reason: str) -> str:
+def _otp_message(reason: str) -> str:
     return {
         "used": "This code has already been used.",
         "expired": "This code has expired. Request a new one.",
@@ -61,6 +93,8 @@ def _otp_error(reason: str) -> str:
 
 
 class RegisterView(_AuthView):
+    throttle_scope = "auth_register"
+
     @extend_schema(
         tags=["auth"],
         summary="Register a user",
@@ -71,18 +105,16 @@ class RegisterView(_AuthView):
         ),
         request=RegisterSerializer,
         responses={
-            201: inline_serializer(
+            201: envelope_schema(
                 "RegisterOk",
-                fields={
-                    "detail": serializers.CharField(),
-                    "email": serializers.EmailField(),
-                },
+                payload=inline_serializer(
+                    "RegisterData",
+                    fields={"email": serializers.EmailField()},
+                ),
             ),
-            400: DetailResponseSerializer,
-            409: inline_serializer(
-                "RegisterConflict",
-                fields={"detail": serializers.CharField()},
-            ),
+            400: envelope_schema("RegisterValidation", error=True),
+            409: envelope_schema("RegisterConflict", error=True),
+            429: envelope_schema("RegisterThrottled", error=True),
         },
     )
     def post(self, request):
@@ -96,22 +128,23 @@ class RegisterView(_AuthView):
             name=data.get("name", ""),
         )
         if user is None:
-            return Response(
-                {"detail": "An account with this email already exists."},
+            return api_error(
+                ErrorCode.EMAIL_TAKEN,
+                "An account with this email already exists.",
                 status=status.HTTP_409_CONFLICT,
             )
 
-        return Response(
-            {
-                "detail": "Registration successful. A 6-digit verification code "
-                "was sent to your email.",
-                "email": data["email"],
-            },
+        return api_success(
+            data={"email": data["email"]},
+            message="Registration successful. A 6-digit verification code "
+            "was sent to your email.",
             status=status.HTTP_201_CREATED,
         )
 
 
 class VerifyEmailView(_AuthView):
+    throttle_scope = "auth_verify"
+
     @extend_schema(
         tags=["auth"],
         summary="Verify email with the emailed code",
@@ -121,8 +154,15 @@ class VerifyEmailView(_AuthView):
         ),
         request=VerifyEmailSerializer,
         responses={
-            200: AuthSessionSerializer,
-            400: DetailResponseSerializer,
+            200: envelope_schema(
+                "VerifyOk",
+                payload=inline_serializer(
+                    "VerifyData",
+                    fields={"user": UserOutSerializer()},
+                ),
+            ),
+            400: envelope_schema("VerifyError", error=True),
+            429: envelope_schema("VerifyThrottled", error=True),
         },
     )
     def post(self, request):
@@ -132,13 +172,17 @@ class VerifyEmailView(_AuthView):
 
         ok, reason, user = verify_email(email=data["email"], code=data["otp"])
         if not ok:
-            return Response(
-                {"detail": _otp_error(reason)}, status=status.HTTP_400_BAD_REQUEST
+            return api_error(
+                ErrorCode.otp(reason),
+                _otp_message(reason),
+                status=status.HTTP_400_BAD_REQUEST,
             )
         return _signed_in_response(user)
 
 
 class ResendOTPView(_AuthView):
+    throttle_scope = "auth_resend_otp"
+
     @extend_schema(
         tags=["auth"],
         summary="Resend a verification or reset code",
@@ -149,8 +193,9 @@ class ResendOTPView(_AuthView):
         ),
         request=ResendOTPSerializer,
         responses={
-            202: DetailResponseSerializer,
-            400: DetailResponseSerializer,
+            202: envelope_schema("ResendOk"),
+            400: envelope_schema("ResendError", error=True),
+            429: envelope_schema("ResendThrottled", error=True),
         },
     )
     def post(self, request):
@@ -160,55 +205,83 @@ class ResendOTPView(_AuthView):
 
         result = resend_otp(email=data["email"], purpose=data["purpose"])
         if result == "already_verified":
-            return Response(
-                {"detail": "This email address is already verified."},
+            return api_error(
+                ErrorCode.ALREADY_VERIFIED,
+                "This email address is already verified.",
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        return Response(
-            {"detail": "If that account exists, a code was sent."},
+        return api_success(
+            message="If that account exists, a code was sent.",
             status=status.HTTP_202_ACCEPTED,
         )
 
 
 class LoginView(_AuthView):
+    throttle_scope = "auth_login"
+
     @extend_schema(
         tags=["auth"],
         summary="Log in with email + password",
         description=(
-            "Returns the user and sets two httpOnly cookies: trazeiq_refresh "
-            "(7 days, path /api/v1/auth/) and trazeiq_access (15 min, path /). "
-            "Access tokens are never returned in the body."
+            "Sends the user in ``data.user`` and sets two httpOnly cookies: "
+            "trazeiq_refresh (7 days, path /api/v1/auth/) and trazeiq_access "
+            "(15 min, path /). Access tokens are never returned in the body."
         ),
         request=LoginSerializer,
         responses={
-            200: AuthSessionSerializer,
-            401: DetailResponseSerializer,
-            403: inline_serializer(
-                "EmailNotVerified",
-                fields={"detail": serializers.CharField()},
+            200: envelope_schema(
+                "LoginOk",
+                payload=inline_serializer(
+                    "LoginData",
+                    fields={"user": UserOutSerializer()},
+                ),
             ),
+            401: envelope_schema("LoginUnauthorized", error=True),
+            403: envelope_schema("LoginUnverified", error=True),
+            429: envelope_schema("LoginThrottled", error=True),
         },
     )
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        email = data["email"]
+        password = data["password"]
 
-        user = authenticate_user(email=data["email"], password=data["password"])
+        # Brute-force lockout: skip the password check entirely for a locked pair.
+        if _is_locked_out(request, email):
+            return _lockout_response()
+
+        user = authenticate_user(email=email, password=password)
         if user is None:
-            return Response(
-                {"detail": "Invalid email or password."},
+            # Count the failure against this (IP, username) pair via the django-axes
+            # handler (connected to user_login_failed). Our login flow bypasses
+            # django.contrib.auth.authenticate(), so the signal is sent manually.
+            user_login_failed.send(
+                sender=LoginView,
+                request=request,
+                credentials={"email": email},
+            )
+            return api_error(
+                ErrorCode.INVALID_CREDENTIALS,
+                "Invalid email or password.",
                 status=status.HTTP_401_UNAUTHORIZED,
             )
         if not user.email_verified or not user.is_active:
-            return Response(
-                {"detail": "email_not_verified"},
+            return api_error(
+                ErrorCode.EMAIL_NOT_VERIFIED,
+                "Verify your email address before logging in.",
                 status=status.HTTP_403_FORBIDDEN,
             )
+
+        if settings.AXES_ENABLED:
+            AxesProxyHandler.reset_attempts(username=email)
         return _signed_in_response(user)
 
 
 class RefreshView(_AuthView):
+    throttle_scope = "auth_refresh"
+
     @extend_schema(
         tags=["auth"],
         summary="Rotate the access token using the refresh cookie",
@@ -219,19 +292,28 @@ class RefreshView(_AuthView):
         ),
         request=None,
         responses={
-            200: AuthSessionSerializer,
-            401: DetailResponseSerializer,
+            200: envelope_schema(
+                "RefreshOk",
+                payload=inline_serializer(
+                    "RefreshData",
+                    fields={"user": UserOutSerializer()},
+                ),
+            ),
+            401: envelope_schema("RefreshError", error=True),
+            429: envelope_schema("RefreshThrottled", error=True),
         },
     )
     def post(self, request):
         result = rotate_refresh_token(get_refresh_cookie(request) or "")
         if result is None:
-            return Response(
-                {"detail": "refresh_token_invalid"}, status=status.HTTP_401_UNAUTHORIZED
+            return api_error(
+                ErrorCode.REFRESH_TOKEN_INVALID,
+                "The refresh token is invalid or has already been used.",
+                status=status.HTTP_401_UNAUTHORIZED,
             )
         user, tokens = result
 
-        response = Response({"user": UserOutSerializer(user).data})
+        response = api_success(data={"user": UserOutSerializer(user).data})
         set_access_cookie(response, tokens["access"])
         set_refresh_cookie(response, tokens["refresh"])
         return response
@@ -242,7 +324,8 @@ class LogoutView(_AuthView):
         tags=["auth"],
         summary="Log out",
         description=(
-            "Blacklists the current refresh token and clears both auth cookies."
+            "Blacklists the current refresh token and clears both auth cookies. "
+            "Responds 204 with no body."
         ),
         request=None,
         responses={204: None},
@@ -263,18 +346,27 @@ class MeView(APIView):
         summary="Current user",
         description=(
             "Authenticates via the Authorization Bearer header or the "
-            "trazeiq_access httpOnly cookie, and returns the signed-in user."
+            "trazeiq_access httpOnly cookie, and returns the signed-in user "
+            "under ``data.user``."
         ),
         responses={
-            200: UserOutSerializer,
-            401: DetailResponseSerializer,
+            200: envelope_schema(
+                "MeOk",
+                payload=inline_serializer(
+                    "MeData",
+                    fields={"user": UserOutSerializer()},
+                ),
+            ),
+            401: envelope_schema("MeError", error=True),
         },
     )
     def get(self, request):
-        return Response(UserOutSerializer(request.user).data)
+        return api_success({"user": UserOutSerializer(request.user).data})
 
 
 class GoogleAuthView(_AuthView):
+    throttle_scope = "auth_google"
+
     @extend_schema(
         tags=["auth"],
         summary="Sign up / sign in with Google",
@@ -286,8 +378,15 @@ class GoogleAuthView(_AuthView):
         ),
         request=GoogleAuthSerializer,
         responses={
-            200: AuthSessionSerializer,
-            400: DetailResponseSerializer,
+            200: envelope_schema(
+                "GoogleOk",
+                payload=inline_serializer(
+                    "GoogleData",
+                    fields={"user": UserOutSerializer()},
+                ),
+            ),
+            400: envelope_schema("GoogleError", error=True),
+            429: envelope_schema("GoogleThrottled", error=True),
         },
     )
     def post(self, request):
@@ -302,11 +401,17 @@ class GoogleAuthView(_AuthView):
                 name=data.get("name", ""),
             )
         except ValueError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return api_error(
+                ErrorCode.GOOGLE_AUTH_FAILED,
+                str(exc),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return _signed_in_response(user)
 
 
 class ForgotPasswordView(_AuthView):
+    throttle_scope = "auth_forgot"
+
     @extend_schema(
         tags=["auth"],
         summary="Request a password reset code",
@@ -316,20 +421,22 @@ class ForgotPasswordView(_AuthView):
             "registered addresses."
         ),
         request=ForgotPasswordSerializer,
-        responses={200: DetailResponseSerializer},
+        responses={
+            200: envelope_schema("ForgotOk"),
+            429: envelope_schema("ForgotThrottled", error=True),
+        },
     )
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         forgot_password(email=serializer.validated_data["email"])
         # Do not reveal whether the address has an account.
-        return Response(
-            {"detail": "If this account exists, a reset code was sent."},
-            status=status.HTTP_200_OK,
-        )
+        return api_success(message="If this account exists, a reset code was sent.")
 
 
 class ResetPasswordView(_AuthView):
+    throttle_scope = "auth_reset"
+
     @extend_schema(
         tags=["auth"],
         summary="Reset the password",
@@ -340,8 +447,9 @@ class ResetPasswordView(_AuthView):
         ),
         request=ResetPasswordSerializer,
         responses={
-            200: DetailResponseSerializer,
-            400: DetailResponseSerializer,
+            200: envelope_schema("ResetOk"),
+            400: envelope_schema("ResetError", error=True),
+            429: envelope_schema("ResetThrottled", error=True),
         },
     )
     def post(self, request):
@@ -355,7 +463,9 @@ class ResetPasswordView(_AuthView):
             new_password=data["new_password"],
         )
         if not ok:
-            return Response(
-                {"detail": _otp_error(reason)}, status=status.HTTP_400_BAD_REQUEST
+            return api_error(
+                ErrorCode.otp(reason),
+                _otp_message(reason),
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        return Response({"detail": "Password reset complete."})
+        return api_success(message="Password reset complete.")

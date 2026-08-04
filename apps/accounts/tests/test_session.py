@@ -59,13 +59,17 @@ class SessionTests(TestCase):
         self.assertEqual(
             anonymous.get("/api/v1/auth/me/").status_code, 401
         )
+        self.assertEqual(
+            anonymous.get("/api/v1/auth/me/").data["error"]["code"],
+            "NOT_AUTHENTICATED",
+        )
         response = self.client.get(
             "/api/v1/auth/me/",
             HTTP_AUTHORIZATION="Bearer %s"
             % self.login.cookies["trazeiq_access"].value,
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["email"], EMAIL)
+        self.assertEqual(response.data["data"]["user"]["email"], EMAIL)
 
     def test_login_sets_both_cookies(self):
         self.assertIn("trazeiq_access", self.login.cookies)
@@ -79,7 +83,7 @@ class SessionTests(TestCase):
             "/api/v1/auth/me/", HTTP_COOKIE="trazeiq_access=%s" % access
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["email"], EMAIL)
+        self.assertEqual(response.data["data"]["user"]["email"], EMAIL)
 
     def test_logout_clears_both_cookies(self):
         response = self.client.post("/api/v1/auth/logout/", format="json")

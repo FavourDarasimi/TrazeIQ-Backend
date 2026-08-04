@@ -42,3 +42,17 @@ EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="TrazeIQ <no-reply@trazeiq.dev>")
 
 AUTH_COOKIE_SECURE = env.bool("AUTH_COOKIE_SECURE", default=True)
+
+# Shared cache for throttles/rate limits. Use Redis when DJANGO_REDIS_URL is
+# set (else fall back to per-process memory, which under-counts in multi-worker
+# deployments).
+if env("DJANGO_REDIS_URL", default=""):
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": env("DJANGO_REDIS_URL"),
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            },
+        }
+    }

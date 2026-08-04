@@ -25,27 +25,29 @@ from .cookies import (
     set_refresh_cookie,
 )
 from .serializers import (
+    CompleteRegistrationSerializer,
     ForgotPasswordSerializer,
     GoogleAuthSerializer,
     LoginSerializer,
-    RegisterSerializer,
-    ResendOTPSerializer,
+    RequestOTPSerializer,
     ResetPasswordSerializer,
     UserOutSerializer,
-    VerifyEmailSerializer,
+    VerifyOTPSerializer,
 )
 from .services import (
     authenticate_user,
+    complete_registration,
     forgot_password,
     google_authenticate,
     logout_user,
-    register_user,
-    resend_otp,
+    registration_email_cap_exhausted,
+    request_registration_otp,
     reset_password,
     rotate_refresh_token,
     tokens_for,
-    verify_email,
+    verify_registration_otp,
 )
+from .selectors import user_exists
 
 
 class _AuthView(APIView):
@@ -92,128 +94,157 @@ def _otp_message(reason: str) -> str:
     }.get(reason, "Invalid code.")
 
 
-class RegisterView(_AuthView):
-    throttle_scope = "auth_register"
+class RegisterRequestOTPView(_AuthView):
+    throttle_scope = "auth_register_request"
 
     @extend_schema(
         tags=["auth"],
-        summary="Register a user",
+        operation_id="register_request",
+        summary="Signup step 1 — request a verification code",
         description=(
-            "Creates an inactive account and emails a 6-digit verification "
-            "code. The account can only log in after POST /auth/verify/ "
-            "confirms the code."
+            "Emails a 6-digit code to an address that has no account yet. "
+            "No user is created here; the address only becomes an account after "
+            "POST /auth/register/complete/. Responds 409 when the address "
+            "already belongs to an account (the client switches to login) and "
+            "429 when this address has asked for codes too often."
         ),
-        request=RegisterSerializer,
+        request=RequestOTPSerializer,
         responses={
-            201: envelope_schema(
-                "RegisterOk",
-                payload=inline_serializer(
-                    "RegisterData",
-                    fields={"email": serializers.EmailField()},
-                ),
-            ),
-            400: envelope_schema("RegisterValidation", error=True),
-            409: envelope_schema("RegisterConflict", error=True),
-            429: envelope_schema("RegisterThrottled", error=True),
+            200: envelope_schema("RegisterRequestOk"),
+            400: envelope_schema("RegisterRequestValidation", error=True),
+            409: envelope_schema("RegisterRequestConflict", error=True),
+            429: envelope_schema("RegisterRequestThrottled", error=True),
         },
     )
     def post(self, request):
-        serializer = RegisterSerializer(data=request.data)
+        serializer = RequestOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
+        email = serializer.validated_data["email"]
 
-        user = register_user(
-            email=data["email"],
-            password=data["password"],
-            name=data.get("name", ""),
-        )
-        if user is None:
+        if user_exists(email):
             return api_error(
                 ErrorCode.EMAIL_TAKEN,
                 "An account with this email already exists.",
                 status=status.HTTP_409_CONFLICT,
             )
+        if registration_email_cap_exhausted(email):
+            return api_error(
+                ErrorCode.TOO_MANY_REQUESTS,
+                "Too many codes requested for this email. Try again later.",
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
 
+        request_registration_otp(email)
         return api_success(
-            data={"email": data["email"]},
-            message="Registration successful. A 6-digit verification code "
-            "was sent to your email.",
-            status=status.HTTP_201_CREATED,
+            message="A 6-digit verification code was sent to your email."
         )
 
 
-class VerifyEmailView(_AuthView):
-    throttle_scope = "auth_verify"
+class RegisterVerifyOTPView(_AuthView):
+    throttle_scope = "auth_register_verify"
 
     @extend_schema(
         tags=["auth"],
-        summary="Verify email with the emailed code",
+        operation_id="register_verify",
+        summary="Signup step 2 — prove the email with the code",
         description=(
-            "Consumes the 6-digit code emailed at registration. On success the "
-            "user is active and this call logs them in (tokens set as cookies)."
+            "Consumes the code emailed at step 1 and returns a single-use "
+            "registration token (15 min TTL). The token is shown exactly once "
+            "and must be sent to POST /auth/register/complete/ together with "
+            "the new password."
         ),
-        request=VerifyEmailSerializer,
+        request=VerifyOTPSerializer,
         responses={
             200: envelope_schema(
-                "VerifyOk",
+                "RegisterVerifyOk",
                 payload=inline_serializer(
-                    "VerifyData",
-                    fields={"user": UserOutSerializer()},
+                    "RegisterVerifyData",
+                    fields={
+                        "registration_token": serializers.CharField(),
+                    },
                 ),
             ),
-            400: envelope_schema("VerifyError", error=True),
-            429: envelope_schema("VerifyThrottled", error=True),
+            400: envelope_schema("RegisterVerifyError", error=True),
+            429: envelope_schema("RegisterVerifyThrottled", error=True),
         },
     )
     def post(self, request):
-        serializer = VerifyEmailSerializer(data=request.data)
+        serializer = VerifyOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        ok, reason, user = verify_email(email=data["email"], code=data["otp"])
+        ok, reason, raw_token = verify_registration_otp(
+            email=data["email"], code=data["otp"]
+        )
         if not ok:
             return api_error(
                 ErrorCode.otp(reason),
                 _otp_message(reason),
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        return _signed_in_response(user)
+        return api_success(
+            data={"registration_token": raw_token},
+            message="Email verified. Choose your password to finish signing up.",
+        )
 
 
-class ResendOTPView(_AuthView):
-    throttle_scope = "auth_resend_otp"
+class RegisterCompleteView(_AuthView):
+    throttle_scope = "auth_register_complete"
 
     @extend_schema(
         tags=["auth"],
-        summary="Resend a verification or reset code",
+        operation_id="register_complete",
+        summary="Signup step 3 — create the account and log in",
         description=(
-            "Re-issues an OTP for the given purpose (email_verification | "
-            "password_reset). Returns 202 even when the address has no account, "
-            "so this endpoint cannot be used to probe registered emails."
+            "Creates the user (verified + active) from the registration token, "
+            "password and password confirmation, then signs the account in with "
+            "the same cookie session as login. The token is single-use: "
+            "replaying it is rejected."
         ),
-        request=ResendOTPSerializer,
+        request=CompleteRegistrationSerializer,
         responses={
-            202: envelope_schema("ResendOk"),
-            400: envelope_schema("ResendError", error=True),
-            429: envelope_schema("ResendThrottled", error=True),
+            200: envelope_schema(
+                "RegisterCompleteOk",
+                payload=inline_serializer(
+                    "RegisterCompleteData",
+                    fields={"user": UserOutSerializer()},
+                ),
+            ),
+            400: envelope_schema("RegisterCompleteError", error=True),
+            409: envelope_schema("RegisterCompleteConflict", error=True),
+            429: envelope_schema("RegisterCompleteThrottled", error=True),
         },
     )
     def post(self, request):
-        serializer = ResendOTPSerializer(data=request.data)
+        serializer = CompleteRegistrationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        result = resend_otp(email=data["email"], purpose=data["purpose"])
-        if result == "already_verified":
+        ok, reason, user = complete_registration(
+            registration_token=data["registration_token"],
+            password=data["password"],
+        )
+        if not ok:
+            if reason == "email_taken":
+                return api_error(
+                    ErrorCode.EMAIL_TAKEN,
+                    "An account with this email already exists.",
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if reason == "expired_token":
+                return api_error(
+                    ErrorCode.REGISTRATION_TOKEN_EXPIRED,
+                    "This signup session has expired. Start again with your "
+                    "email address.",
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             return api_error(
-                ErrorCode.ALREADY_VERIFIED,
-                "This email address is already verified.",
+                ErrorCode.REGISTRATION_TOKEN_INVALID,
+                "This signup session is invalid or has already been used. "
+                "Start again with your email address.",
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        return api_success(
-            message="If that account exists, a code was sent.",
-            status=status.HTTP_202_ACCEPTED,
-        )
+        return _signed_in_response(user)
 
 
 class LoginView(_AuthView):

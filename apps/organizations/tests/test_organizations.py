@@ -3,6 +3,7 @@
 from rest_framework.test import APIClient
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase
 
 from ..models import Membership, MembershipRole, Organization
@@ -11,26 +12,33 @@ User = get_user_model()
 
 
 def register_and_login(client: APIClient, email: str) -> None:
-    """Full auth flow — the same cookie-based session the frontend uses."""
+    """Full auth flow — the same cookie-based session the frontend uses.
+
+    OTP-first signup: request a code, verify it (dev code 000000), complete
+    with a password — complete signs the account in directly.
+    """
     client.post(
-        "/api/v1/auth/register/",
-        {"email": email, "password": "fdsK9Qop21z!"},
-        format="json",
+        "/api/v1/auth/register/request-otp/", {"email": email}, format="json"
     )
-    client.post(
-        "/api/v1/auth/verify/",
+    verified = client.post(
+        "/api/v1/auth/register/verify-otp/",
         {"email": email, "otp": "000000"},
         format="json",
     )
     client.post(
-        "/api/v1/auth/login/",
-        {"email": email, "password": "fdsK9Qop21z!"},
+        "/api/v1/auth/register/complete/",
+        {
+            "registration_token": verified.data["data"]["registration_token"],
+            "password": "fdsK9Qop21z!",
+            "confirm_password": "fdsK9Qop21z!",
+        },
         format="json",
     )
 
 
 class OrganizationCreateTests(TestCase):
     def setUp(self):
+        cache.clear()  # reset the per-email signup cap between test cases
         self.client = APIClient()
         register_and_login(self.client, "owner@trazeiq.io")
 
@@ -76,6 +84,7 @@ class OrganizationCreateTests(TestCase):
 
 class OrganizationListTests(TestCase):
     def setUp(self):
+        cache.clear()  # reset the per-email signup cap between test cases
         self.client = APIClient()
         register_and_login(self.client, "member@trazeiq.io")
 

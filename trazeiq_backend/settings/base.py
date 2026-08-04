@@ -122,14 +122,31 @@ AUTH_DEV_OTP = env("AUTH_DEV_OTP", default="")
 AUTH_OTP_TTL_MINUTES = env.int("AUTH_OTP_TTL_MINUTES", default=10)
 AUTH_OTP_MAX_ATTEMPTS = env.int("AUTH_OTP_MAX_ATTEMPTS", default=5)
 
+# Single-use registration token issued by register/verify-otp and consumed by
+# register/complete (OTP-first signup). Only its hash is stored.
+AUTH_REGISTRATION_TOKEN_TTL_MINUTES = env.int(
+    "AUTH_REGISTRATION_TOKEN_TTL_MINUTES", default=15
+)
+# Hard per-email ceiling for signup codes, on top of the per-IP throttle.
+AUTH_REGISTER_EMAIL_CAP = env.int("AUTH_REGISTER_EMAIL_CAP", default=3)
+AUTH_REGISTER_EMAIL_CAP_MINUTES = env.int(
+    "AUTH_REGISTER_EMAIL_CAP_MINUTES", default=15
+)
+
 # ---- Per-endpoint rate limits (auth) ----
 # Each auth endpoint is throttled per client IP. Rates are Django throttle
 # strings ("N/min", "N/hour", ...) and are read by AuthScopedRateThrottle
 # from these settings so environments can tune them via .env.
 AUTH_THROTTLE_LOGIN = env("AUTH_THROTTLE_LOGIN", default="60/min")
-AUTH_THROTTLE_REGISTER = env("AUTH_THROTTLE_REGISTER", default="60/min")
-AUTH_THROTTLE_VERIFY = env("AUTH_THROTTLE_VERIFY", default="30/min")
-AUTH_THROTTLE_RESEND_OTP = env("AUTH_THROTTLE_RESEND_OTP", default="10/min")
+AUTH_THROTTLE_REGISTER_REQUEST = env(
+    "AUTH_THROTTLE_REGISTER_REQUEST", default="10/min"
+)
+AUTH_THROTTLE_REGISTER_VERIFY = env(
+    "AUTH_THROTTLE_REGISTER_VERIFY", default="30/min"
+)
+AUTH_THROTTLE_REGISTER_COMPLETE = env(
+    "AUTH_THROTTLE_REGISTER_COMPLETE", default="20/min"
+)
 AUTH_THROTTLE_FORGOT = env("AUTH_THROTTLE_FORGOT", default="10/min")
 AUTH_THROTTLE_RESET = env("AUTH_THROTTLE_RESET", default="20/min")
 AUTH_THROTTLE_GOOGLE = env("AUTH_THROTTLE_GOOGLE", default="20/min")
@@ -143,6 +160,10 @@ AXES_ENABLED = env.bool("DJANGO_AXES_ENABLED", default=True)
 AXES_FAILURE_LIMIT = env.int("AXES_FAILURE_LIMIT", default=5)
 AXES_COOLOFF_TIME = env.float("AXES_COOLOFF_TIME_HOURS", default=0.25)  # 15 min
 AXES_LOCKOUT_PARAMETERS = [["ip_address", "username"]]  # failures count per (IP, account) pair
+# Our login credentials key the username by "email"; without this axes falls
+# back to its "username" default and records every failure as anonymous,
+# making lockout effectively per-IP instead of per-account.
+AXES_USERNAME_FORM_FIELD = "email"
 AXES_RESET_ON_SUCCESS = False  # successes clear attempts explicitly in the view
 AXES_NEVER_LOCKOUT_WHITELIST = []
 

@@ -5,9 +5,21 @@ from . import views
 app_name = "accounts"
 
 urlpatterns = [
-    path("register/", views.RegisterView.as_view(), name="register"),
-    path("verify/", views.VerifyEmailView.as_view(), name="verify"),
-    path("resend-otp/", views.ResendOTPView.as_view(), name="resend-otp"),
+    path(
+        "register/request-otp/",
+        views.RegisterRequestOTPView.as_view(),
+        name="register-request-otp",
+    ),
+    path(
+        "register/verify-otp/",
+        views.RegisterVerifyOTPView.as_view(),
+        name="register-verify-otp",
+    ),
+    path(
+        "register/complete/",
+        views.RegisterCompleteView.as_view(),
+        name="register-complete",
+    ),
     path("login/", views.LoginView.as_view(), name="login"),
     path("refresh/", views.RefreshView.as_view(), name="refresh"),
     path("logout/", views.LogoutView.as_view(), name="logout"),

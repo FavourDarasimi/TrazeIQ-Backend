@@ -70,13 +70,24 @@ class OTPCode(models.Model):
     """A 6-digit verification code, stored only as a hash.
 
     Delivery is email-first. While ``settings.AUTH_DEV_OTP`` is set (e.g.
-    ``000000``), that code is additionally accepted for any user so the flow
-    works before real email delivery is wired up.
+    ``000000``), that code is additionally accepted so the flow works before
+    real email delivery is wired up.
+
+    Two keying modes:
+
+    - ``user`` set (password reset): belongs to an existing account.
+    - ``user`` None + ``email`` set (registration): the address is not an
+      account yet — the code is only held until the signup completes.
     """
 
     user = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="otp_codes"
+        User,
+        on_delete=models.CASCADE,
+        related_name="otp_codes",
+        null=True,
+        blank=True,
     )
+    email = models.EmailField(null=True, blank=True, db_index=True)
     purpose = models.CharField(max_length=32, choices=OTPPurpose.choices)
     code_hash = models.CharField(max_length=64)
     expires_at = models.DateTimeField()
@@ -87,6 +98,7 @@ class OTPCode(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=["user", "purpose"]),
+            models.Index(fields=["email", "purpose"]),
         ]
 
     @property
@@ -98,3 +110,22 @@ class OTPCode(models.Model):
         if dev_otp and secrets.compare_digest(code, dev_otp):
             return True
         return secrets.compare_digest(self.code_hash, hash_code(code))
+
+
+class RegistrationToken(models.Model):
+    """Single-use token minted after the OTP verifies, consumed at signup.
+
+    Only the hash is stored; the raw token is shown to the client exactly once
+    in the verify-otp response and must be presented to complete the signup.
+    Expires after ``AUTH_REGISTRATION_TOKEN_TTL_MINUTES``.
+    """
+
+    email = models.EmailField(unique=True)
+    token_hash = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def is_expired(self) -> bool:
+        return timezone.now() >= self.expires_at

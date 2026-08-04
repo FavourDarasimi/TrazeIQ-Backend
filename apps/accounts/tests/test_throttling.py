@@ -19,13 +19,22 @@ class ThrottlingTests(TestCase):
         cache.clear()  # wipe throttle history from earlier tests
         self.client = APIClient()
         self.client.post(
-            "/api/v1/auth/register/",
-            {"email": EMAIL, "password": PASSWORD},
+            "/api/v1/auth/register/request-otp/",
+            {"email": EMAIL},
+            format="json",
+        )
+        verified = self.client.post(
+            "/api/v1/auth/register/verify-otp/",
+            {"email": EMAIL, "otp": "000000"},
             format="json",
         )
         self.client.post(
-            "/api/v1/auth/verify/",
-            {"email": EMAIL, "otp": "000000"},
+            "/api/v1/auth/register/complete/",
+            {
+                "registration_token": verified.data["data"]["registration_token"],
+                "password": PASSWORD,
+                "confirm_password": PASSWORD,
+            },
             format="json",
         )
 
@@ -70,27 +79,27 @@ class ThrottlingTests(TestCase):
 
         # Register has its own (default) rate — unaffected by the login limit.
         response = self.client.post(
-            "/api/v1/auth/register/",
-            {"email": "other@trazeiq.io", "password": PASSWORD},
+            "/api/v1/auth/register/request-otp/",
+            {"email": "other@trazeiq.io"},
             format="json",
         )
-        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.status_code, 200)
 
     @override_settings(AUTH_DEV_OTP="000000")
-    @override_settings(AUTH_THROTTLE_REGISTER="2/min")
-    def test_register_is_throttled(self):
-        # setUp already registered EMAIL (1 hit); the first new register is
-        # the 2nd within the window, the next one trips the 2/min limit.
+    @override_settings(AUTH_THROTTLE_REGISTER_REQUEST="2/min")
+    def test_register_request_is_throttled(self):
+        # setUp already requested a code for EMAIL (1 hit); the first new
+        # request is the 2nd within the window, the next one trips the 2/min limit.
         response = self.client.post(
-            "/api/v1/auth/register/",
-            {"email": "new@trazeiq.io", "password": PASSWORD},
+            "/api/v1/auth/register/request-otp/",
+            {"email": "new@trazeiq.io"},
             format="json",
         )
-        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.status_code, 200)
 
         response = self.client.post(
-            "/api/v1/auth/register/",
-            {"email": "newer@trazeiq.io", "password": PASSWORD},
+            "/api/v1/auth/register/request-otp/",
+            {"email": "newer@trazeiq.io"},
             format="json",
         )
         self.assertEqual(response.status_code, 429)

@@ -1,6 +1,5 @@
 from rest_framework import serializers
 
-from .models import OTPPurpose
 from .validators import validate_new_password
 
 
@@ -8,13 +7,34 @@ def validate_email_lower(value: str) -> str:
     return (value or "").strip().lower()
 
 
-class RegisterSerializer(serializers.Serializer):
+class RequestOTPSerializer(serializers.Serializer):
+    """Step 1 of signup: ask for a code at an unused address."""
+
     email = serializers.EmailField()
-    password = serializers.CharField(write_only=True)
-    name = serializers.CharField(required=False, allow_blank=True, default="")
 
     def validate_email(self, value):
         return validate_email_lower(value)
+
+
+class VerifyOTPSerializer(serializers.Serializer):
+    """Step 2 of signup: prove ownership of the address with the emailed code."""
+
+    email = serializers.EmailField()
+    otp = serializers.CharField(max_length=6, min_length=6)
+
+    def validate_email(self, value):
+        return validate_email_lower(value)
+
+
+class CompleteRegistrationSerializer(serializers.Serializer):
+    """Step 3 of signup: choose the password and finish creating the account.
+
+    The registration_token was returned by verify-otp; it is single-use.
+    """
+
+    registration_token = serializers.CharField()
+    password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
 
     def validate_password(self, value):
         if len(value) < 8:
@@ -22,6 +42,13 @@ class RegisterSerializer(serializers.Serializer):
                 "Password must be at least 8 characters."
             )
         return validate_new_password(value)
+
+    def validate(self, attrs):
+        if attrs["password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
+        return attrs
 
 
 class UserOutSerializer(serializers.Serializer):
@@ -47,22 +74,6 @@ class AuthSessionSerializer(serializers.Serializer):
     cookies, never returned in this body."""
 
     user = UserOutSerializer()
-
-
-class VerifyEmailSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    otp = serializers.CharField(max_length=6, min_length=6)
-
-    def validate_email(self, value):
-        return validate_email_lower(value)
-
-
-class ResendOTPSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    purpose = serializers.ChoiceField(choices=OTPPurpose.choices)
-
-    def validate_email(self, value):
-        return validate_email_lower(value)
 
 
 class LoginSerializer(serializers.Serializer):

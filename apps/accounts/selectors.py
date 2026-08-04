@@ -28,3 +28,14 @@ def get_live_otp(user: User, purpose: OTPPurpose) -> OTPCode | None:
         if not otp.is_expired:
             return otp
     return None
+
+
+def get_live_email_otp(email: str, purpose: OTPPurpose) -> OTPCode | None:
+    """The freshest live code for a not-yet-registered address."""
+    qs = OTPCode.objects.filter(
+        email=email, purpose=purpose, used_at__isnull=True
+    ).order_by("-created_at")
+    for otp in qs:
+        if not otp.is_expired:
+            return otp
+    return None

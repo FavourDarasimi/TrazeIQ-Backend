@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 
 from axes.handlers.proxy import AxesProxyHandler
 
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 
 EMAIL = "lockout@trazeiq.io"
@@ -20,15 +21,25 @@ PASSWORD = "fdsK9Qop21z!"
 class LockoutTests(TestCase):
     def setUp(self):
         AxesProxyHandler.reset_attempts()
+        cache.clear()  # reset the per-email signup cap between test cases
         self.client = APIClient()
         self.client.post(
-            "/api/v1/auth/register/",
-            {"email": EMAIL, "password": PASSWORD},
+            "/api/v1/auth/register/request-otp/",
+            {"email": EMAIL},
+            format="json",
+        )
+        verified = self.client.post(
+            "/api/v1/auth/register/verify-otp/",
+            {"email": EMAIL, "otp": "000000"},
             format="json",
         )
         self.client.post(
-            "/api/v1/auth/verify/",
-            {"email": EMAIL, "otp": "000000"},
+            "/api/v1/auth/register/complete/",
+            {
+                "registration_token": verified.data["data"]["registration_token"],
+                "password": PASSWORD,
+                "confirm_password": PASSWORD,
+            },
             format="json",
         )
 
@@ -102,13 +113,22 @@ class LockoutTests(TestCase):
     def test_failures_are_per_username(self):
         other = "other@trazeiq.io"
         self.client.post(
-            "/api/v1/auth/register/",
-            {"email": other, "password": PASSWORD},
+            "/api/v1/auth/register/request-otp/",
+            {"email": other},
+            format="json",
+        )
+        verified = self.client.post(
+            "/api/v1/auth/register/verify-otp/",
+            {"email": other, "otp": "000000"},
             format="json",
         )
         self.client.post(
-            "/api/v1/auth/verify/",
-            {"email": other, "otp": "000000"},
+            "/api/v1/auth/register/complete/",
+            {
+                "registration_token": verified.data["data"]["registration_token"],
+                "password": PASSWORD,
+                "confirm_password": PASSWORD,
+            },
             format="json",
         )
         for _ in range(3):

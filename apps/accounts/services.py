@@ -4,55 +4,81 @@ import urllib.request
 from urllib.error import URLError
 
 from django.conf import settings
+from django.core.cache import cache
 from django.core.mail import send_mail
 from django.utils import timezone
 
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import OTPCode, OTPPurpose, User
+from .models import OTPCode, OTPPurpose, RegistrationToken, User
 from .selectors import (
+    get_live_email_otp,
     get_live_otp,
     get_user_by_email,
     get_user_by_google_sub,
     get_user_by_id,
     user_exists,
 )
-from .utils import generate_otp, hash_code
+from .utils import generate_otp, generate_registration_token, hash_code
 
 logger = logging.getLogger(__name__)
 
 
-# --- Registration / email verification ---------------------------------------
+# --- Registration (OTP-first) ------------------------------------------------
 
-def register_user(email: str, password: str, name: str) -> User | None:
-    """Create an inactive account and email a verification code.
 
-    Returns ``None`` when the email is already taken.
+def request_registration_otp(email: str) -> OTPCode:
+    """Issue a fresh email-keyed verification code for a new signup.
+
+    Re-requesting rotates the code: any prior live code for the address is
+    voided. No account row is created yet — the user only exists once POST
+    /auth/register/complete/ succeeds. Callers must reject already-registered
+    addresses before calling.
     """
-    if user_exists(email):
-        return None
-
-    user = User.objects.create_user(
+    OTPCode.objects.filter(
         email=email,
-        password=password,
-        first_name=(name or "").strip(),
-        is_active=False,
+        purpose=OTPPurpose.EMAIL_VERIFICATION,
+        used_at__isnull=True,
+    ).update(used_at=timezone.now())
+
+    code = generate_otp()
+    otp = OTPCode.objects.create(
+        user=None,
+        email=email,
+        purpose=OTPPurpose.EMAIL_VERIFICATION,
+        code_hash=hash_code(code),
+        expires_at=timezone.now()
+        + timezone.timedelta(minutes=settings.AUTH_OTP_TTL_MINUTES),
     )
-    issue_otp(user, OTPPurpose.EMAIL_VERIFICATION)
-    return user
+    _notify(otp, code)
+    return otp
 
 
-def verify_email(email: str, code: str) -> tuple[bool, str, User | None]:
-    """Activate a user once the emailed code is accepted.
+def registration_email_cap_exhausted(email: str) -> bool:
+    """True when this address has asked for more codes than allowed per window.
 
-    Returns ``(ok, reason, user)``; on failure ``user`` is ``None``.
+    A cheap per-email ceiling on top of the per-IP throttle — stops an address
+    being used to burn through the shared IP limit (email bombing).
     """
-    user = get_user_by_email(email)
-    if user is None:
-        return False, "invalid", None
+    window = settings.AUTH_REGISTER_EMAIL_CAP_MINUTES * 60
+    key = f"register:email_cap:{email}"
+    if cache.add(key, 1, window):
+        return False
+    try:
+        return cache.incr(key) > settings.AUTH_REGISTER_EMAIL_CAP
+    except ValueError:  # entry expired between add and incr
+        cache.set(key, 1, window)
+        return False
 
-    otp = get_live_otp(user, OTPPurpose.EMAIL_VERIFICATION)
+
+def verify_registration_otp(email: str, code: str) -> tuple[bool, str, str | None]:
+    """Consume the emailed code and mint a single-use registration token.
+
+    Returns ``(ok, reason, raw_token)``; ``raw_token`` is returned to the
+    client exactly once — only its hash is stored.
+    """
+    otp = get_live_email_otp(email, OTPPurpose.EMAIL_VERIFICATION)
     if otp is None:
         return False, "invalid", None
 
@@ -60,25 +86,46 @@ def verify_email(email: str, code: str) -> tuple[bool, str, User | None]:
     if not ok:
         return False, reason, None
 
-    user.email_verified = True
-    user.is_active = True
-    user.save(update_fields=["email_verified", "is_active"])
-    return True, "verified", user
+    raw = generate_registration_token()
+    RegistrationToken.objects.filter(email=email).delete()
+    RegistrationToken.objects.create(
+        email=email,
+        token_hash=hash_code(raw),
+        expires_at=timezone.now()
+        + timezone.timedelta(minutes=settings.AUTH_REGISTRATION_TOKEN_TTL_MINUTES),
+    )
+    return True, "verified", raw
 
 
-def resend_otp(email: str, purpose: str) -> str:
-    """Re-issue a verification/reset code.
+def complete_registration(
+    registration_token: str, password: str
+) -> tuple[bool, str, User | None]:
+    """Create the account once the registration token checks out.
 
-    Returns one of ``sent`` | ``no_account`` | ``already_verified`` so callers
-    can respond without leaking which addresses have accounts.
+    Returns ``(ok, reason, user)``; on success the user is verified + active
+    and the caller logs them in. The token is single-use — a replayed or
+    expired token never reaches this branch.
     """
-    user = get_user_by_email(email)
-    if user is None:
-        return "no_account"
-    if purpose == OTPPurpose.EMAIL_VERIFICATION and user.email_verified:
-        return "already_verified"
-    issue_otp(user, purpose)
-    return "sent"
+    token = RegistrationToken.objects.filter(
+        token_hash=hash_code(registration_token)
+    ).first()
+    if token is None or token.used_at is not None:
+        return False, "invalid_token", None
+    if token.is_expired:
+        return False, "expired_token", None
+    if user_exists(token.email):
+        return False, "email_taken", None
+
+    user = User.objects.create_user(
+        email=token.email,
+        password=password,
+        email_verified=True,
+        is_active=True,
+        auth_provider="email",
+    )
+    token.used_at = timezone.now()
+    token.save(update_fields=["used_at"])
+    return True, "created", user
 
 
 # --- Login / sessions ---------------------------------------------------------
@@ -300,16 +347,19 @@ def _verify_google_id_token(id_token: str) -> dict:
 
 
 def _notify(otp: OTPCode, code: str) -> None:
+    recipient = otp.email or (otp.user.email if otp.user else "")
+    if not recipient:
+        return
     try:
         send_mail(
             _subject(otp.purpose),
             _message(otp.purpose, code),
             settings.DEFAULT_FROM_EMAIL,
-            [otp.user.email],
+            [recipient],
             fail_silently=True,
         )
     except Exception as exc:  # noqa: BLE001 — never break a signup on email failure
-        logger.warning("OTP email delivery failed for %s: %s", otp.user.email, exc)
+        logger.warning("OTP email delivery failed for %s: %s", recipient, exc)
 
 
 def _subject(purpose: str) -> str:

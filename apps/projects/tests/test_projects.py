@@ -2,6 +2,7 @@
 
 from rest_framework.test import APIClient
 
+from django.core.cache import cache
 from django.test import TestCase
 
 from ..models import Project
@@ -12,18 +13,21 @@ PASSWORD = "fdsK9Qop21z!"
 
 def register_and_login(client: APIClient, email: str) -> None:
     client.post(
-        "/api/v1/auth/register/",
-        {"email": email, "password": PASSWORD},
-        format="json",
+        "/api/v1/auth/register/request-otp/", {"email": email}, format="json"
     )
-    client.post(
-        "/api/v1/auth/verify/",
+    verified = client.post(
+        "/api/v1/auth/register/verify-otp/",
         {"email": email, "otp": "000000"},
         format="json",
     )
+    # complete signs the account in directly (cookies) — no separate login call.
     client.post(
-        "/api/v1/auth/login/",
-        {"email": email, "password": PASSWORD},
+        "/api/v1/auth/register/complete/",
+        {
+            "registration_token": verified.data["data"]["registration_token"],
+            "password": PASSWORD,
+            "confirm_password": PASSWORD,
+        },
         format="json",
     )
 
@@ -37,6 +41,7 @@ def create_org(client: APIClient, name: str) -> int:
 
 class ProjectCreateTests(TestCase):
     def setUp(self):
+        cache.clear()  # reset the per-email signup cap between test cases
         self.client = APIClient()
         register_and_login(self.client, "dev@trazeiq.io")
         self.organization_id = create_org(self.client, "Acme")
@@ -120,6 +125,7 @@ class ProjectMutationTests(TestCase):
     """Update/delete work for the project owner's organization."""
 
     def setUp(self):
+        cache.clear()  # reset the per-email signup cap between test cases
         self.client = APIClient()
         register_and_login(self.client, "dev@trazeiq.io")
         self.organization_id = create_org(self.client, "Acme")
@@ -148,6 +154,7 @@ class ProjectTenantIsolationTests(TestCase):
     """Agent.md rule 2: no tenant data is ever visible across organizations."""
 
     def setUp(self):
+        cache.clear()  # reset the per-email signup cap between test cases
         self.alice = APIClient()
         register_and_login(self.alice, "alice@trazeiq.io")
         alice_org = create_org(self.alice, "Acme")

@@ -33,8 +33,12 @@ def delete_project(project: Project) -> None:
     project.delete()
 
 
-def sdk_snippet(raw_key: str, environment: str) -> str:
-    """Copy-paste snippet shown next to the raw key, exactly once."""
+def integration_snippet(raw_key: str, environment: str) -> str:
+    """Copy-paste direct HTTP snippet shown next to the raw key, once.
+
+    The integration surface is a plain HTTPS POST — no packaged SDK is
+    shipped (see Backend-Phases.md); this snippet is the whole integration.
+    """
     return (
         "curl -X POST https://api.trazeiq.io/api/v1/events/ \\\n"
         '  -H "Content-Type: application/json" \\\n'

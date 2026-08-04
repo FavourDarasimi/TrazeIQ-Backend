@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from trazeiq_backend.responses import api_error, api_success, envelope_schema
 
 from .selectors import get_organization_for_user, list_organizations_for_user
-from .serializers import OrganizationInSerializer, OrganizationOutSerializer
+from .serializers import OrganizationInputSerializer, OrganizationOutputSerializer
 from .services import create_organization
 
 ORG_NOT_FOUND = "This organization does not exist."
@@ -31,7 +31,7 @@ class OrganizationListView(APIView):
                 payload=inline_serializer(
                     "OrganizationListData",
                     fields={
-                        "organizations": OrganizationOutSerializer(many=True),
+                        "organizations": OrganizationOutputSerializer(many=True),
                     },
                 ),
             ),
@@ -42,7 +42,7 @@ class OrganizationListView(APIView):
         organizations = list_organizations_for_user(request.user)
         return api_success(
             data={
-                "organizations": OrganizationOutSerializer(
+                "organizations": OrganizationOutputSerializer(
                     organizations, many=True
                 ).data
             }
@@ -56,13 +56,13 @@ class OrganizationListView(APIView):
             "Creates the organization and a Membership with role=owner for "
             "the caller."
         ),
-        request=OrganizationInSerializer,
+        request=OrganizationInputSerializer,
         responses={
             201: envelope_schema(
                 "OrganizationCreateOk",
                 payload=inline_serializer(
                     "OrganizationCreateData",
-                    fields={"organization": OrganizationOutSerializer()},
+                    fields={"organization": OrganizationOutputSerializer()},
                 ),
             ),
             400: envelope_schema("OrganizationCreateValidation", error=True),
@@ -70,14 +70,14 @@ class OrganizationListView(APIView):
         },
     )
     def post(self, request):
-        serializer = OrganizationInSerializer(data=request.data)
+        serializer = OrganizationInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         organization = create_organization(
             name=serializer.validated_data["name"],
             owner=request.user,
         )
         return api_success(
-            data={"organization": OrganizationOutSerializer(organization).data},
+            data={"organization": OrganizationOutputSerializer(organization).data},
             status=status.HTTP_201_CREATED,
         )
 
@@ -94,7 +94,7 @@ class OrganizationDetailView(APIView):
                 "OrganizationDetailOk",
                 payload=inline_serializer(
                     "OrganizationDetailData",
-                    fields={"organization": OrganizationOutSerializer()},
+                    fields={"organization": OrganizationOutputSerializer()},
                 ),
             ),
             401: envelope_schema("OrganizationDetailUnauthorized", error=True),
@@ -106,7 +106,7 @@ class OrganizationDetailView(APIView):
         if organization is None:
             raise NotFound(ORG_NOT_FOUND)
         return api_success(
-            data={"organization": OrganizationOutSerializer(organization).data}
+            data={"organization": OrganizationOutputSerializer(organization).data}
         )
 
 

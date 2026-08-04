@@ -12,11 +12,11 @@ from apps.organizations.selectors import (
 from trazeiq_backend.responses import api_success, envelope_schema
 
 from .selectors import get_project_for_user, list_projects_for_user
-from .serializers import ProjectInSerializer, ProjectOutSerializer
+from .serializers import ProjectInputSerializer, ProjectOutputSerializer
 from .services import (
     create_project,
     delete_project,
-    sdk_snippet,
+    integration_snippet,
     update_project,
 )
 
@@ -27,7 +27,7 @@ ORGANIZATION_NOT_FOUND = "This organization does not exist."
 def _project_schema(name: str):
     return inline_serializer(
         name,
-        fields={"project": ProjectOutSerializer()},
+        fields={"project": ProjectOutputSerializer()},
     )
 
 
@@ -48,7 +48,7 @@ class ProjectListView(APIView):
                 "ProjectListOk",
                 payload=inline_serializer(
                     "ProjectListData",
-                    fields={"projects": ProjectOutSerializer(many=True)},
+                    fields={"projects": ProjectOutputSerializer(many=True)},
                 ),
             ),
             401: envelope_schema("ProjectListUnauthorized", error=True),
@@ -58,7 +58,7 @@ class ProjectListView(APIView):
         projects = list_projects_for_user(request.user)
         return api_success(
             data={
-                "projects": ProjectOutSerializer(projects, many=True).data
+                "projects": ProjectOutputSerializer(projects, many=True).data
             }
         )
 
@@ -68,19 +68,19 @@ class ProjectListView(APIView):
         summary="Create a project",
         description=(
             "Generates a fresh API key, stores only its hash, and returns "
-            "the raw key together with a copy-paste snippet — available "
-            "exactly once, in this response."
+            "the raw key together with a copy-paste direct HTTP snippet — "
+            "available exactly once, in this response."
         ),
-        request=ProjectInSerializer,
+        request=ProjectInputSerializer,
         responses={
             201: envelope_schema(
                 "ProjectCreateOk",
                 payload=inline_serializer(
                     "ProjectCreateData",
                     fields={
-                        "project": ProjectOutSerializer(),
+                        "project": ProjectOutputSerializer(),
                         "api_key": serializers.CharField(),
-                        "sdk_snippet": serializers.CharField(),
+                        "integration_snippet": serializers.CharField(),
                     },
                 ),
             ),
@@ -90,7 +90,7 @@ class ProjectListView(APIView):
         },
     )
     def post(self, request):
-        serializer = ProjectInSerializer(data=request.data)
+        serializer = ProjectInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         organization_id = serializer.validated_data.get("organization")
@@ -110,9 +110,11 @@ class ProjectListView(APIView):
         )
         return api_success(
             data={
-                "project": ProjectOutSerializer(project).data,
+                "project": ProjectOutputSerializer(project).data,
                 "api_key": raw_key,
-                "sdk_snippet": sdk_snippet(raw_key, project.environment),
+                "integration_snippet": integration_snippet(
+                    raw_key, project.environment
+                ),
             },
             status=status.HTTP_201_CREATED,
         )
@@ -130,7 +132,7 @@ class ProjectDetailView(APIView):
                 "ProjectDetailOk",
                 payload=inline_serializer(
                     "ProjectDetailData",
-                    fields={"project": ProjectOutSerializer()},
+                    fields={"project": ProjectOutputSerializer()},
                 ),
             ),
             401: envelope_schema("ProjectDetailUnauthorized", error=True),
@@ -141,20 +143,20 @@ class ProjectDetailView(APIView):
         project = get_project_for_user(pk, request.user)
         if project is None:
             raise NotFound(PROJECT_NOT_FOUND)
-        return api_success(data={"project": ProjectOutSerializer(project).data})
+        return api_success(data={"project": ProjectOutputSerializer(project).data})
 
     @extend_schema(
         tags=["projects"],
         operation_id="projects_update",
         summary="Update a project",
         description="Update the project's name and/or environment.",
-        request=ProjectInSerializer,
+        request=ProjectInputSerializer,
         responses={
             200: envelope_schema(
                 "ProjectUpdateOk",
                 payload=inline_serializer(
                     "ProjectUpdateData",
-                    fields={"project": ProjectOutSerializer()},
+                    fields={"project": ProjectOutputSerializer()},
                 ),
             ),
             400: envelope_schema("ProjectUpdateValidation", error=True),
@@ -167,7 +169,7 @@ class ProjectDetailView(APIView):
         if project is None:
             raise NotFound(PROJECT_NOT_FOUND)
 
-        serializer = ProjectInSerializer(
+        serializer = ProjectInputSerializer(
             data=request.data, partial=True
         )
         serializer.is_valid(raise_exception=True)
@@ -176,7 +178,7 @@ class ProjectDetailView(APIView):
             name=serializer.validated_data.get("name"),
             environment=serializer.validated_data.get("environment"),
         )
-        return api_success(data={"project": ProjectOutSerializer(project).data})
+        return api_success(data={"project": ProjectOutputSerializer(project).data})
 
     @extend_schema(
         tags=["projects"],

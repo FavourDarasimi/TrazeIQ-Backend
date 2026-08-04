@@ -31,7 +31,7 @@ from .serializers import (
     LoginSerializer,
     RequestOTPSerializer,
     ResetPasswordSerializer,
-    UserOutSerializer,
+    UserOutputSerializer,
     VerifyOTPSerializer,
 )
 from .services import (
@@ -79,7 +79,7 @@ def _lockout_response() -> Response:
 def _signed_in_response(user) -> Response:
     """Body carries ``data.user``; tokens ride in httpOnly cookies only."""
     tokens = tokens_for(user)
-    response = api_success(data={"user": UserOutSerializer(user).data})
+    response = api_success(data={"user": UserOutputSerializer(user).data})
     set_access_cookie(response, tokens["access"])
     set_refresh_cookie(response, tokens["refresh"])
     return response
@@ -207,7 +207,7 @@ class RegisterCompleteView(_AuthView):
                 "RegisterCompleteOk",
                 payload=inline_serializer(
                     "RegisterCompleteData",
-                    fields={"user": UserOutSerializer()},
+                    fields={"user": UserOutputSerializer()},
                 ),
             ),
             400: envelope_schema("RegisterCompleteError", error=True),
@@ -264,7 +264,7 @@ class LoginView(_AuthView):
                 "LoginOk",
                 payload=inline_serializer(
                     "LoginData",
-                    fields={"user": UserOutSerializer()},
+                    fields={"user": UserOutputSerializer()},
                 ),
             ),
             401: envelope_schema("LoginUnauthorized", error=True),
@@ -327,7 +327,7 @@ class RefreshView(_AuthView):
                 "RefreshOk",
                 payload=inline_serializer(
                     "RefreshData",
-                    fields={"user": UserOutSerializer()},
+                    fields={"user": UserOutputSerializer()},
                 ),
             ),
             401: envelope_schema("RefreshError", error=True),
@@ -344,7 +344,7 @@ class RefreshView(_AuthView):
             )
         user, tokens = result
 
-        response = api_success(data={"user": UserOutSerializer(user).data})
+        response = api_success(data={"user": UserOutputSerializer(user).data})
         set_access_cookie(response, tokens["access"])
         set_refresh_cookie(response, tokens["refresh"])
         return response
@@ -385,14 +385,14 @@ class MeView(APIView):
                 "MeOk",
                 payload=inline_serializer(
                     "MeData",
-                    fields={"user": UserOutSerializer()},
+                    fields={"user": UserOutputSerializer()},
                 ),
             ),
             401: envelope_schema("MeError", error=True),
         },
     )
     def get(self, request):
-        return api_success({"user": UserOutSerializer(request.user).data})
+        return api_success({"user": UserOutputSerializer(request.user).data})
 
 
 class GoogleAuthView(_AuthView):
@@ -413,7 +413,7 @@ class GoogleAuthView(_AuthView):
                 "GoogleOk",
                 payload=inline_serializer(
                     "GoogleData",
-                    fields={"user": UserOutSerializer()},
+                    fields={"user": UserOutputSerializer()},
                 ),
             ),
             400: envelope_schema("GoogleError", error=True),

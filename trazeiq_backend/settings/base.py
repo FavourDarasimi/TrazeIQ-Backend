@@ -152,6 +152,16 @@ AUTH_THROTTLE_RESET = env("AUTH_THROTTLE_RESET", default="20/min")
 AUTH_THROTTLE_GOOGLE = env("AUTH_THROTTLE_GOOGLE", default="20/min")
 AUTH_THROTTLE_REFRESH = env("AUTH_THROTTLE_REFRESH", default="30/min")
 
+# ---- Event ingestion ----
+# Cap on the message+stacktrace payload accepted by POST /api/v1/events/.
+# Oversized payloads get a 413 before anything else happens.
+EVENT_MAX_PAYLOAD_BYTES = env.int("EVENT_MAX_PAYLOAD_BYTES", default=100_000)
+# Throttles on the ingestion endpoint: a per-IP cap (deterrent against
+# credential stuffing with stolen keys) and a per-key cap (protects the
+# endpoint from one misbehaving integration key starving everyone else).
+EVENT_THROTTLE_IP = env("EVENT_THROTTLE_IP", default="5000/min")
+EVENT_THROTTLE_KEY = env("EVENT_THROTTLE_KEY", default="30/s")
+
 # ---- Brute-force lockout (django-axes) ----
 # Tracks failed logins per (IP, username) pair. The auth login view checks
 # is_user_locked_out() and sends family user_login_failed itself — our login
@@ -214,6 +224,7 @@ SPECTACULAR_SETTINGS = {
         {"name": "auth", "description": "Registration, verification, login and password recovery"},
         {"name": "organizations", "description": "Tenant organizations and membership"},
         {"name": "projects", "description": "Projects and their API keys"},
+        {"name": "events", "description": "Direct HTTP event ingestion and event querying"},
     ],
 }
 

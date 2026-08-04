@@ -63,7 +63,7 @@ class ProjectCreateTests(TestCase):
         self.assertEqual(data["project"]["environment"], "production")
         self.assertEqual(data["project"]["api_key_prefix"], raw_key[:8])
         self.assertEqual(len(raw_key), 64)
-        self.assertIn(f"X-API-Key: {raw_key}", data["sdk_snippet"])
+        self.assertIn(f"X-API-Key: {raw_key}", data["integration_snippet"])
 
         # The raw key appears nowhere else later — only the prefix does.
         detail = self.client.get(f"/api/v1/projects/{project.id}/")

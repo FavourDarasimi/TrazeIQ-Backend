@@ -3,7 +3,7 @@ from rest_framework import serializers
 from .models import Project
 
 
-class ProjectInSerializer(serializers.Serializer):
+class ProjectInputSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=120, min_length=1)
     organization = serializers.IntegerField(required=False)
     environment = serializers.CharField(
@@ -11,7 +11,7 @@ class ProjectInSerializer(serializers.Serializer):
     )
 
 
-class ProjectOutSerializer(serializers.ModelSerializer):
+class ProjectOutputSerializer(serializers.ModelSerializer):
     class Meta:
         model = Project
         fields = [

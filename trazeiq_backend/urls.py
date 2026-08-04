@@ -18,6 +18,7 @@ urlpatterns = [
     path("api/v1/auth/", include("apps.accounts.urls")),
     path("api/v1/organizations/", include("apps.organizations.urls")),
     path("api/v1/projects/", include("apps.projects.urls")),
+    path("api/v1/events/", include("apps.events.urls")),
     # Unversioned alias for the health probe
     path("api/health/", health),
 ]

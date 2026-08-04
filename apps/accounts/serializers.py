@@ -51,7 +51,7 @@ class CompleteRegistrationSerializer(serializers.Serializer):
         return attrs
 
 
-class UserOutSerializer(serializers.Serializer):
+class UserOutputSerializer(serializers.Serializer):
     """Read-only shape of a user for response bodies."""
 
     email = serializers.EmailField(read_only=True)
@@ -73,7 +73,7 @@ class AuthSessionSerializer(serializers.Serializer):
     """Signed-in response. The JWT access + refresh tokens are set as httpOnly
     cookies, never returned in this body."""
 
-    user = UserOutSerializer()
+    user = UserOutputSerializer()
 
 
 class LoginSerializer(serializers.Serializer):

@@ -255,3 +255,33 @@ CACHES = {
         "LOCATION": "trazeiq-default",
     }
 }
+
+# ---- Celery (async jobs) ----
+# Redis-backed broker/result backend. The worker process is started with
+# `celery -A trazeiq_backend worker`; docker-compose runs Redis + Django + the
+# worker together for local development. Nothing in the ingestion hot path may
+# call a Celery task synchronously (Agent.md rule 1) — .delay() only.
+from kombu import Queue  # noqa: E402
+
+CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = env(
+    "CELERY_RESULT_BACKEND", default="redis://localhost:6379/1"
+)
+# Celery 5.3+ stops retrying broker connections at startup by default; keep the
+# worker waiting for Redis instead of dying on a brief startup race.
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_TASK_DEFAULT_QUEUE = "default"
+CELERY_TASK_QUEUES = (
+    Queue("default"),
+    # Dedicated queue for OpenRouter analysis jobs. Kept separate from the
+    # default queue so a burst of analysis jobs can't starve lighter tasks,
+    # and rate-limited to stay under OpenRouter's ~20 requests/minute free
+    # ceiling (see Project_Overview.md §7).
+    Queue("ai_analysis"),
+)
+# Every task under apps/ai lands on the rate-limited AI queue. The glob covers
+# Phase 2B's `analyze_incident` (and any future ai-app tasks) without needing a
+# new route entry per task.
+CELERY_TASK_ROUTES = {
+    "apps.ai.tasks.*": {"queue": "ai_analysis", "rate_limit": "15/m"},
+}

@@ -2,6 +2,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import F
 from django.utils import timezone
 
+from apps.ai.services import enqueue_analysis_if_needed
 from apps.incidents.models import Incident
 
 from .models import ErrorGroup, Event
@@ -35,10 +36,10 @@ def ingest_event(
       3. get-or-create the ErrorGroup for ``(project, fingerprint)`` and bump
          count/last_seen,
       4. reuse the open Incident for that group (create one if none),
-      5. always persist the raw Event.
-
-    Nothing here touches AI or async code — ingestion is purely synchronous
-    and fast (Agent.md constraint 1 caps what this path is allowed to do).
+      5. always persist the raw Event,
+      6. decide + enqueue AI analysis (new incident or stale analysis only) —
+         async via Celery, never inline (Agent.md rule 1: the ingestion
+         request must respond in milliseconds regardless of the LLM).
     """
     redacted_message = redact_secrets(message)
     redacted_stacktrace = redact_secrets(stacktrace or "")
@@ -72,7 +73,7 @@ def ingest_event(
         defaults={"severity": severity_from_level(level)},
     )
 
-    return Event.objects.create(
+    event = Event.objects.create(
         project=project,
         error_group=group,
         message=redacted_message,
@@ -87,3 +88,9 @@ def ingest_event(
         metadata=metadata or {},
         fingerprint=fp,
     )
+
+    # Spec §6 steps 8–9: enqueue analysis only for a brand-new incident or a
+    # stale analysis — never inline, and never allowed to fail the request.
+    enqueue_analysis_if_needed(incident_id=incident.pk, is_new=_created)
+
+    return event

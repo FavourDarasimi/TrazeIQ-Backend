@@ -186,6 +186,37 @@ SILENCED_SYSTEM_CHECKS = ["axes.W002", "axes.W003"]
 # Empty in dev: /auth/google/ runs in stub mode (no token verification).
 GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID", default="")
 
+# ---- OpenRouter / AI analysis (Phase 2B) ----
+# Empty API key means analysis fails gracefully with status=failed (no retry
+# storm) until a real key is configured. Base URL is the OpenRouter API root.
+OPENROUTER_API_KEY = env("OPENROUTER_API_KEY", default="")
+OPENROUTER_BASE_URL = env(
+    "OPENROUTER_BASE_URL", default="https://openrouter.ai/api/v1"
+)
+# Ordered fallback chain tried on 429/error. Verified against OpenRouter's live
+# model list Aug 2026 — the original spec's `qwen/qwen3-30b-a3b:free` was
+# delisted; the free lineup rotates weekly, so re-check before shipping.
+OPENROUTER_MODELS = env.list(
+    "OPENROUTER_MODELS",
+    default=[
+        "openai/gpt-oss-20b:free",
+        "deepseek/deepseek-r1:free",
+        "openrouter/free",
+    ],
+)
+OPENROUTER_TIMEOUT_SECONDS = env.int("OPENROUTER_TIMEOUT_SECONDS", default=90)
+
+# Analysis caching window: repeats of an already-analyzed incident are not
+# re-analyzed while the latest analysis is younger than this (spec §7 — this
+# is what keeps us inside OpenRouter's free-tier rate limits).
+AI_ANALYSIS_CACHE_HOURS = env.int("AI_ANALYSIS_CACHE_HOURS", default=6)
+# The prompt is built from redacted, truncated error content so a giant
+# stacktrace can't blow the model's context window.
+AI_PROMPT_MAX_CHARS = env.int("AI_PROMPT_MAX_CHARS", default=20_000)
+# 429 backoff: countdown = base * 2 ** attempt, capped by max retries.
+AI_RETRY_BASE_SECONDS = env.int("AI_RETRY_BASE_SECONDS", default=60)
+AI_RETRY_MAX_ATTEMPTS = env.int("AI_RETRY_MAX_ATTEMPTS", default=5)
+
 # ---- Django REST Framework ----
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [

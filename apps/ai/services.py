@@ -92,6 +92,27 @@ def enqueue_analysis_if_needed(*, incident_id: int, is_new: bool) -> bool:
     return True
 
 
+def trigger_manual_analysis(*, incident: Incident) -> AIAnalysis:
+    """Manually re-trigger AI analysis for an incident, bypassing the cache window.
+
+    Creates a pending AIAnalysis row (or reuses an existing pending row) and
+    enqueues the analyze_incident Celery task.
+    """
+    analysis = _pending_analysis(incident)
+    try:
+        from .tasks import analyze_incident
+
+        analyze_incident.delay(incident.id)
+    except Exception as exc:  # noqa: BLE001 — broker failure swallowed
+        logger.warning(
+            "Manual analysis enqueue failed for incident %s: %s",
+            incident.id,
+            exc,
+        )
+    return analysis
+
+
+
 def _pending_analysis(incident: Incident) -> AIAnalysis:
     """The in-flight row for this incident — created if this is the first
     attempt. The partial unique constraint guarantees one pending row per

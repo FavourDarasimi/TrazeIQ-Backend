@@ -133,8 +133,8 @@ class AIViewsTestCase(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertTrue(res.json()["success"])
         data = res.json()["data"]["analysis"]
-        self.assertEqual(data["id"], analysis.id)
-        self.assertEqual(data["incident_id"], self.incident.id)
+        self.assertEqual(data["id"], str(analysis.id))
+        self.assertEqual(data["incident_id"], str(self.incident.id))
         self.assertEqual(data["status"], "ready")
         self.assertEqual(data["root_cause"], "Null reference in map")
         self.assertEqual(data["suggested_fix"], "Check for null before calling map")
@@ -150,7 +150,7 @@ class AIViewsTestCase(TestCase):
         res = self.client.get(f"/api/v1/incidents/{self.incident.id}/analysis/")
         self.assertEqual(res.status_code, 200)
         data = res.json()["data"]["analysis"]
-        self.assertEqual(data["id"], analysis.id)
+        self.assertEqual(data["id"], str(analysis.id))
         self.assertEqual(data["status"], "pending")
 
     def test_post_analyze_unknown_or_foreign_incident_returns_404(self):
@@ -171,9 +171,9 @@ class AIViewsTestCase(TestCase):
         self.assertTrue(res.json()["success"])
         data = res.json()["data"]["analysis"]
         self.assertEqual(data["status"], "pending")
-        self.assertEqual(data["incident_id"], self.incident.id)
+        self.assertEqual(data["incident_id"], str(self.incident.id))
 
-        mock_delay.assert_called_once_with(self.incident.id)
+        mock_delay.assert_called_once_with(str(self.incident.id))
         self.assertTrue(
             AIAnalysis.objects.filter(
                 incident=self.incident, status=AIAnalysis.Status.PENDING
@@ -193,7 +193,7 @@ class AIViewsTestCase(TestCase):
 
         res = self.client.post(f"/api/v1/incidents/{self.incident.id}/analyze/")
         self.assertEqual(res.status_code, 200)
-        mock_delay.assert_called_once_with(self.incident.id)
+        mock_delay.assert_called_once_with(str(self.incident.id))
 
         # There are now two analyses: the old READY one and a new PENDING one
         self.assertEqual(

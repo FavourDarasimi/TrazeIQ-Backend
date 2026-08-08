@@ -5,6 +5,8 @@ from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
 from django.utils import timezone
 
+from trazeiq_backend.models import UUIDModel
+
 from .utils import hash_code
 
 
@@ -37,8 +39,12 @@ class UserManager(BaseUserManager):
         return self._create_user(email, password, **extra_fields)
 
 
-class User(AbstractUser):
-    """The TrazeIQ user. Login identifier is email, not username."""
+class User(AbstractUser, UUIDModel):
+    """The TrazeIQ user. Login identifier is email, not username.
+
+    ``id`` comes from the shared ``UUIDModel`` base (a UUID primary key),
+    so the auth token claims and every FK to the user share the UUID type.
+    """
 
     username = None
 
@@ -66,7 +72,7 @@ class OTPPurpose(models.TextChoices):
     PASSWORD_RESET = "password_reset", "password_reset"
 
 
-class OTPCode(models.Model):
+class OTPCode(UUIDModel):
     """A 6-digit verification code, stored only as a hash.
 
     Delivery is email-first. While ``settings.AUTH_DEV_OTP`` is set (e.g.
@@ -112,7 +118,7 @@ class OTPCode(models.Model):
         return secrets.compare_digest(self.code_hash, hash_code(code))
 
 
-class RegistrationToken(models.Model):
+class RegistrationToken(UUIDModel):
     """Single-use token minted after the OTP verifies, consumed at signup.
 
     Only the hash is stored; the raw token is shown to the client exactly once

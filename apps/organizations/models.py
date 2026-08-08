@@ -1,8 +1,10 @@
 from django.conf import settings
 from django.db import models
 
+from trazeiq_backend.models import UUIDModel
 
-class Organization(models.Model):
+
+class Organization(UUIDModel):
     """A tenant. Every project and every piece of tenant data hangs off it."""
 
     name = models.CharField(max_length=120)
@@ -27,7 +29,7 @@ class MembershipRole(models.TextChoices):
     VIEWER = "viewer", "viewer"
 
 
-class Membership(models.Model):
+class Membership(UUIDModel):
     """Links a user to an organization with a role."""
 
     user = models.ForeignKey(

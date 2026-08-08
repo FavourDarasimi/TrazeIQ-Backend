@@ -31,7 +31,7 @@ def register_and_login(client: APIClient, email: str) -> None:
     )
 
 
-def create_org(client: APIClient, name: str) -> int:
+def create_org(client: APIClient, name: str) -> str:
     response = client.post(
         "/api/v1/organizations/", {"name": name}, format="json"
     )

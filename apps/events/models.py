@@ -1,7 +1,9 @@
 from django.db import models
 
+from trazeiq_backend.models import UUIDModel
 
-class ErrorGroup(models.Model):
+
+class ErrorGroup(UUIDModel):
     """A deduplicated error signature — a fact about the codebase.
 
     One row per ``(project, fingerprint)``: repeated occurrences increment
@@ -34,7 +36,7 @@ class ErrorGroup(models.Model):
         return f"{self.title} x{self.count}"
 
 
-class Event(models.Model):
+class Event(UUIDModel):
     """One raw error occurrence, always persisted — even for the 500th repeat.
 
     ``message`` and ``stacktrace`` are stored post-redaction (the raw text is

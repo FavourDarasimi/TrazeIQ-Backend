@@ -1,5 +1,7 @@
 """Phase 1C: project creation, one-time API key, tenant isolation."""
 
+from uuid import uuid4
+
 from rest_framework.test import APIClient
 
 from django.core.cache import cache
@@ -32,7 +34,7 @@ def register_and_login(client: APIClient, email: str) -> None:
     )
 
 
-def create_org(client: APIClient, name: str) -> int:
+def create_org(client: APIClient, name: str) -> str:
     response = client.post(
         "/api/v1/organizations/", {"name": name}, format="json"
     )
@@ -58,7 +60,7 @@ class ProjectCreateTests(TestCase):
 
         project = Project.objects.get()
         raw_key = data["api_key"]
-        self.assertEqual(data["project"]["id"], project.id)
+        self.assertEqual(data["project"]["id"], str(project.id))
         self.assertEqual(data["project"]["name"], "Web")
         self.assertEqual(data["project"]["environment"], "production")
         self.assertEqual(data["project"]["api_key_prefix"], raw_key[:8])
@@ -92,12 +94,12 @@ class ProjectCreateTests(TestCase):
         )
         self.assertEqual(response.status_code, 201)
         project = Project.objects.get()
-        self.assertEqual(project.organization_id, self.organization_id)
+        self.assertEqual(str(project.organization_id), self.organization_id)
 
     def test_create_with_unknown_organization_is_404(self):
         response = self.client.post(
             "/api/v1/projects/",
-            {"name": "Web", "organization": 9999},
+            {"name": "Web", "organization": str(uuid4())},
             format="json",
         )
         self.assertEqual(response.status_code, 404)

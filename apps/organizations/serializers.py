@@ -8,6 +8,8 @@ class OrganizationInputSerializer(serializers.Serializer):
 
 
 class OrganizationOutputSerializer(serializers.ModelSerializer):
+    owner = serializers.UUIDField(source="owner_id", read_only=True)
+
     class Meta:
         model = Organization
         fields = ["id", "name", "owner", "created_at"]

@@ -1,7 +1,9 @@
 from django.db import models
 
+from trazeiq_backend.models import UUIDModel
 
-class AIAnalysis(models.Model):
+
+class AIAnalysis(UUIDModel):
     """The result of one LLM root-cause run for an incident.
 
     One row per analysis attempt, not per event — the ingestion path only

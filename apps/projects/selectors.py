@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from .models import Project
 
 
@@ -8,7 +10,7 @@ def list_projects_for_user(user):
     ).distinct()
 
 
-def get_project_for_user(project_id: int, user):
+def get_project_for_user(project_id: UUID, user):
     """A single project the user can access, or ``None``.
 
     Scoped through membership like every tenant queryset — unknown ids and

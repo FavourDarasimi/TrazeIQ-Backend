@@ -60,9 +60,9 @@ class OrganizationCreateTests(TestCase):
 
         # The response exposes the org, not the membership rows.
         data = response.data["data"]["organization"]
-        self.assertEqual(data["id"], organization.id)
+        self.assertEqual(data["id"], str(organization.id))
         self.assertEqual(data["name"], "Acme")
-        self.assertEqual(data["owner"], organization.owner_id)
+        self.assertEqual(data["owner"], str(organization.owner_id))
 
     def test_create_requires_name(self):
         response = self.client.post(

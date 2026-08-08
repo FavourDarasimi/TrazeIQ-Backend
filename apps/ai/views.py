@@ -8,6 +8,7 @@ from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
+from uuid import UUID
 
 from apps.incidents.selectors import get_incident_for_user
 from trazeiq_backend.responses import api_success, envelope_schema
@@ -47,7 +48,7 @@ class IncidentAnalyzeView(APIView):
             404: envelope_schema("IncidentAnalyzeNotFound", error=True),
         },
     )
-    def post(self, request, incident_id: int):
+    def post(self, request, incident_id: UUID):
         incident = get_incident_for_user(incident_id, request.user)
         if incident is None:
             raise NotFound(INCIDENT_NOT_FOUND)
@@ -84,7 +85,7 @@ class IncidentAnalysisView(APIView):
             404: envelope_schema("IncidentAnalysisNotFound", error=True),
         },
     )
-    def get(self, request, incident_id: int):
+    def get(self, request, incident_id: UUID):
         incident = get_incident_for_user(incident_id, request.user)
         if incident is None:
             raise NotFound(INCIDENT_NOT_FOUND)

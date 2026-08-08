@@ -5,13 +5,15 @@ from .models import Project
 
 class ProjectInputSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=120, min_length=1)
-    organization = serializers.IntegerField(required=False)
+    organization = serializers.UUIDField(required=False)
     environment = serializers.CharField(
         max_length=32, required=False, default="production"
     )
 
 
 class ProjectOutputSerializer(serializers.ModelSerializer):
+    organization = serializers.UUIDField(source="organization_id", read_only=True)
+
     class Meta:
         model = Project
         fields = [

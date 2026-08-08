@@ -14,6 +14,7 @@ Celery-level retries (429/5xx backoff) are the task's job.
 
 import logging
 from datetime import timedelta
+from uuid import UUID
 
 from django.conf import settings
 from django.db import IntegrityError
@@ -44,7 +45,7 @@ def retry_countdown(attempt: int) -> int:
     return settings.AI_RETRY_BASE_SECONDS * (2 ** max(attempt, 0))
 
 
-def latest_analysis_for_incident(incident_id: int) -> AIAnalysis | None:
+def latest_analysis_for_incident(incident_id: UUID) -> AIAnalysis | None:
     return (
         AIAnalysis.objects.filter(incident_id=incident_id)
         .order_by("-created_at", "-id")
@@ -52,7 +53,7 @@ def latest_analysis_for_incident(incident_id: int) -> AIAnalysis | None:
     )
 
 
-def enqueue_analysis_if_needed(*, incident_id: int, is_new: bool) -> bool:
+def enqueue_analysis_if_needed(*, incident_id: UUID, is_new: bool) -> bool:
     """Decide whether this occurrence needs a fresh analysis, then enqueue.
 
     The cache rule (spec §7 — this is what keeps us inside OpenRouter's
@@ -83,7 +84,7 @@ def enqueue_analysis_if_needed(*, incident_id: int, is_new: bool) -> bool:
         # would be circular.
         from .tasks import analyze_incident
 
-        analyze_incident.delay(incident_id)
+        analyze_incident.delay(str(incident_id))
     except Exception as exc:  # noqa: BLE001 — any broker failure is swallowed
         logger.warning(
             "Analysis enqueue failed for incident %s: %s", incident_id, exc
@@ -102,7 +103,7 @@ def trigger_manual_analysis(*, incident: Incident) -> AIAnalysis:
     try:
         from .tasks import analyze_incident
 
-        analyze_incident.delay(incident.id)
+        analyze_incident.delay(str(incident.id))
     except Exception as exc:  # noqa: BLE001 — broker failure swallowed
         logger.warning(
             "Manual analysis enqueue failed for incident %s: %s",
@@ -190,7 +191,7 @@ def _fail(analysis: AIAnalysis, *, attempts: list, reason: str) -> None:
     analysis.save(update_fields=["status", "model_used", "raw_response"])
 
 
-def mark_analysis_failed(incident_id: int, *, reason: str) -> None:
+def mark_analysis_failed(incident_id: UUID, *, reason: str) -> None:
     """Flip the incident's pending analysis row to ``failed`` — the task's
     graceful give-up paths (no API key, retries exhausted, unexpected error).
     """
@@ -210,7 +211,7 @@ def mark_analysis_failed(incident_id: int, *, reason: str) -> None:
     analysis.save(update_fields=["status", "raw_response"])
 
 
-def run_analysis(incident_id: int) -> AIAnalysis:
+def run_analysis(incident_id: UUID) -> AIAnalysis:
     """One analysis run for an incident: call the LLM, save the result.
 
     Raises :class:`RateLimitError` / :class:`OpenRouterAPIError` when every

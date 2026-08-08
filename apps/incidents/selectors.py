@@ -1,6 +1,8 @@
 """Read-side queries for incidents — every queryset is membership-scoped
 (Agent.md rule 2)."""
 
+from uuid import UUID
+
 from django.db.models import OuterRef, QuerySet, Subquery
 
 from apps.events.models import Event
@@ -39,7 +41,7 @@ def list_incidents_for_user(
     *,
     status=None,
     severity=None,
-    project_id=None,
+    project_id: UUID | None = None,
 ) -> QuerySet[Incident]:
     """Incidents the user can see, most recently-active first."""
     qs = _incidents_for_user(user)
@@ -52,7 +54,7 @@ def list_incidents_for_user(
     return _with_latest_event(qs).order_by("-error_group__last_seen")
 
 
-def get_incident_for_user(incident_id: int, user):
+def get_incident_for_user(incident_id: UUID, user):
     """A single incident the user can access, or ``None``.
 
     Same 404-for-unknown-and-foreign contract as every tenant getter —
@@ -65,7 +67,7 @@ def get_incident_for_user(incident_id: int, user):
     )
 
 
-def latest_events_by_id(incidents) -> dict[int, Event]:
+def latest_events_by_id(incidents) -> dict[UUID, Event]:
     """Resolve the annotated ``latest_event_id``s into Event rows, keyed by
     event id. Call after fetching incidents; ``incident.latest_event_id``
     stays ``None`` only when the group has no occurrences."""

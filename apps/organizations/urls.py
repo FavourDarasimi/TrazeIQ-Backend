@@ -6,5 +6,5 @@ app_name = "organizations"
 
 urlpatterns = [
     path("", views.OrganizationListView.as_view(), name="list"),
-    path("<int:pk>/", views.OrganizationDetailView.as_view(), name="detail"),
+    path("<uuid:pk>/", views.OrganizationDetailView.as_view(), name="detail"),
 ]

@@ -9,6 +9,7 @@ from rest_framework import serializers, status
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
+from uuid import UUID
 
 from trazeiq_backend.responses import api_success, envelope_schema
 
@@ -64,7 +65,7 @@ class IncidentListView(APIView):
                     "severity": serializers.ChoiceField(
                         choices=Incident.Severity.choices, required=False
                     ),
-                    "project": serializers.IntegerField(required=False),
+                    "project": serializers.UUIDField(required=False),
                 },
             )
         ],
@@ -101,10 +102,10 @@ class IncidentListView(APIView):
         project_id = query.get("project")
         if project_id is not None:
             try:
-                project_id = int(project_id)
-            except (TypeError, ValueError):
+                project_id = UUID(project_id)
+            except (TypeError, ValueError, AttributeError):
                 raise serializers.ValidationError(
-                    {"project": "Must be an integer."}
+                    {"project": "Must be a valid UUID."}
                 )
 
         incidents = list_incidents_for_user(
@@ -142,7 +143,7 @@ class IncidentDetailView(APIView):
             404: envelope_schema("IncidentDetailNotFound", error=True),
         },
     )
-    def get(self, request, incident_id: int):
+    def get(self, request, incident_id: UUID):
         incident = get_incident_for_user(incident_id, request.user)
         if incident is None:
             raise NotFound(INCIDENT_NOT_FOUND)
@@ -191,7 +192,7 @@ class IncidentTimelineView(APIView):
             404: envelope_schema("IncidentTimelineNotFound", error=True),
         },
     )
-    def get(self, request, incident_id: int):
+    def get(self, request, incident_id: UUID):
         incident = get_incident_for_user(incident_id, request.user)
         if incident is None:
             raise NotFound(INCIDENT_NOT_FOUND)

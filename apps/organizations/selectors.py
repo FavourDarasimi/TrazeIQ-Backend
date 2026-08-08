@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from .models import Membership, Organization
 
 
@@ -6,7 +8,7 @@ def list_organizations_for_user(user):
     return Organization.objects.filter(memberships__user=user).distinct()
 
 
-def get_organization_for_user(organization_id: int, user):
+def get_organization_for_user(organization_id: UUID, user):
     """A single org the user is a member of, or ``None``.
 
     Returns ``None`` both for unknown ids and for orgs the caller has no

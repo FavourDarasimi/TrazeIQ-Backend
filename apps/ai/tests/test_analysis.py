@@ -13,6 +13,7 @@ import json
 import logging
 from datetime import timedelta
 from unittest.mock import patch
+from uuid import uuid4
 
 from celery import exceptions as celery_exceptions
 from django.conf import settings
@@ -66,7 +67,7 @@ def register_and_login(client: APIClient, email: str) -> None:
     )
 
 
-def create_org(client: APIClient, name: str) -> int:
+def create_org(client: APIClient, name: str) -> str:
     response = client.post(
         "/api/v1/organizations/", {"name": name}, format="json"
     )
@@ -386,5 +387,5 @@ class AnalyzeTaskTests(EagerAnalysisMixin, TestCase):
     def test_task_ignores_missing_incident(self):
         with override_settings(OPENROUTER_API_KEY="test-key"):
             with self.assertLogs("apps.ai.tasks", level="WARNING"):
-                analyze_incident.apply(args=[999_999])
+                analyze_incident.apply(args=[uuid4()])
         self.assertEqual(AIAnalysis.objects.count(), 0)

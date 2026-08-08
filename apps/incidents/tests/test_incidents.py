@@ -8,6 +8,7 @@ data flows through list/detail/timeline, filters work, and tenant isolation
 from django.core.cache import cache
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
+from uuid import uuid4
 
 from apps.events.tests.test_events import create_project, register_and_login
 from apps.incidents.models import Incident
@@ -134,7 +135,7 @@ class IncidentDetailTests(IncidentSetupMixin, TestCase):
         self.assertIsNotNone(incident["error_group"]["last_seen"])
 
     def test_unknown_id_is_404(self):
-        response = self.client.get("/api/v1/incidents/99999/")
+        response = self.client.get(f"/api/v1/incidents/{uuid4()}/")
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.data["error"]["code"], "NOT_FOUND")
 

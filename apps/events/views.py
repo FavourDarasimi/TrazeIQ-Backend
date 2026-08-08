@@ -2,6 +2,7 @@ from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
 from rest_framework.exceptions import NotFound
 from rest_framework.views import APIView
+from uuid import UUID
 
 from trazeiq_backend.responses import api_success, api_error, envelope_schema
 
@@ -153,7 +154,7 @@ class EventDetailView(APIView):
             404: envelope_schema("EventDetailNotFound", error=True),
         },
     )
-    def get(self, request, event_id: int):
+    def get(self, request, event_id: UUID):
         event = get_event_for_user(event_id, request.user)
         if event is None:
             raise NotFound(EVENT_NOT_FOUND)

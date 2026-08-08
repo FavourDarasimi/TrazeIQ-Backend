@@ -1,8 +1,10 @@
 from django.conf import settings
 from django.db import models
 
+from trazeiq_backend.models import UUIDModel
 
-class Incident(models.Model):
+
+class Incident(UUIDModel):
     """The tracked workflow around an ErrorGroup.
 
     Distinct from the error group on purpose: a group is a fact about the
@@ -65,7 +67,7 @@ class Incident(models.Model):
         return f"#{self.pk} {self.severity}/{self.status} {self.error_group}"
 
 
-class TimelineEntry(models.Model):
+class TimelineEntry(UUIDModel):
     """One row of an incident's history: event occurrence, comment, status
     change, or AI analysis (spec data model).
 

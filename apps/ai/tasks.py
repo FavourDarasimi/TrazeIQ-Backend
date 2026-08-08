@@ -7,6 +7,7 @@ calls a service, it never contains business logic).
 """
 
 import logging
+from uuid import UUID
 
 from celery import shared_task
 from django.conf import settings
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, name="apps.ai.tasks.analyze_incident")
-def analyze_incident(self, incident_id: int):
+def analyze_incident(self, incident_id: UUID):
     """Analyze one incident's error pattern via OpenRouter (spec §7).
 
     Retry-able failures (429, network/5xx) back off exponentially through

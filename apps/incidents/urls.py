@@ -11,22 +11,22 @@ from .views import (
 urlpatterns = [
     path("", IncidentListView.as_view(), name="incident-list"),
     path(
-        "<int:incident_id>/",
+        "<uuid:incident_id>/",
         IncidentDetailView.as_view(),
         name="incident-detail",
     ),
     path(
-        "<int:incident_id>/timeline/",
+        "<uuid:incident_id>/timeline/",
         IncidentTimelineView.as_view(),
         name="incident-timeline",
     ),
     path(
-        "<int:incident_id>/analyze/",
+        "<uuid:incident_id>/analyze/",
         IncidentAnalyzeView.as_view(),
         name="incident-analyze",
     ),
     path(
-        "<int:incident_id>/analysis/",
+        "<uuid:incident_id>/analysis/",
         IncidentAnalysisView.as_view(),
         name="incident-analysis",
     ),

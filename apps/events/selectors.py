@@ -1,4 +1,5 @@
 import datetime
+from uuid import UUID
 
 from .models import Event
 
@@ -31,7 +32,7 @@ def list_events_for_user(
     return qs.select_related("project", "error_group")
 
 
-def get_event_for_user(event_id: int, user):
+def get_event_for_user(event_id: UUID, user):
     """A single event the user can access, or ``None``.
 
     Scoped through membership like every tenant queryset — unknown ids and

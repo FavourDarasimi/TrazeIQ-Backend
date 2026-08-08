@@ -91,7 +91,7 @@ class TimelineEntryOutputSerializer(serializers.Serializer):
     ``ai_analysis`` — the shape below is their contract.
     """
 
-    id = serializers.IntegerField()
+    id = serializers.UUIDField()
     kind = serializers.CharField()
     level = serializers.CharField()
     message = serializers.CharField()

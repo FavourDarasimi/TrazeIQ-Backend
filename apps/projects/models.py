@@ -3,8 +3,10 @@ import secrets
 from django.conf import settings
 from django.db import models
 
+from trazeiq_backend.models import UUIDModel
 
-class Project(models.Model):
+
+class Project(UUIDModel):
     """An application watched by TrazeIQ.
 
     The raw API key is never stored — only its deterministic HMAC-SHA256

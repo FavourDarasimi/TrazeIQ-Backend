@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     "apps.alerts",
     "apps.notifications",
     "apps.analytics",
+    "apps.realtime",
 ]
 
 MIDDLEWARE = [
@@ -217,6 +218,21 @@ AI_PROMPT_MAX_CHARS = env.int("AI_PROMPT_MAX_CHARS", default=20_000)
 AI_RETRY_BASE_SECONDS = env.int("AI_RETRY_BASE_SECONDS", default=60)
 AI_RETRY_MAX_ATTEMPTS = env.int("AI_RETRY_MAX_ATTEMPTS", default=5)
 
+# ---- Pusher realtime (Phase 3A) ----
+# Empty app id/key/secret → publishing is a no-op (dev-safe). The secret is
+# never exposed to any frontend code or API response — only POST /pusher/auth/
+# signs private channels server-side.
+PUSHER_APP_ID = env("PUSHER_APP_ID", default="")
+PUSHER_KEY = env("PUSHER_KEY", default="")
+PUSHER_SECRET = env("PUSHER_SECRET", default="")
+PUSHER_CLUSTER = env("PUSHER_CLUSTER", default="mt1")
+PUSHER_USE_TLS = env.bool("PUSHER_USE_TLS", default=True)
+# Publishing is best-effort: a slow/unreachable Pusher must never slow the
+# ingestion hot path, so client calls time out quickly and fail open.
+PUSHER_PUBLISH_TIMEOUT_SECONDS = env.float(
+    "PUSHER_PUBLISH_TIMEOUT_SECONDS", default=2.0
+)
+
 # ---- Django REST Framework ----
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
@@ -256,6 +272,7 @@ SPECTACULAR_SETTINGS = {
         {"name": "organizations", "description": "Tenant organizations and membership"},
         {"name": "projects", "description": "Projects and their API keys"},
         {"name": "events", "description": "Direct HTTP event ingestion and event querying"},
+        {"name": "realtime", "description": "Pusher channel auth and live event publishing"},
     ],
 }
 

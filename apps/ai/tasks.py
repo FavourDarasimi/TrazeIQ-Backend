@@ -13,6 +13,7 @@ from celery import shared_task
 from django.conf import settings
 
 from apps.incidents.models import Incident
+from apps.realtime.services import publish_analysis_ready
 
 from .openrouter import OpenRouterAPIError, RateLimitError
 from .services import (
@@ -68,3 +69,7 @@ def analyze_incident(self, incident_id: UUID):
             "analyze_incident: unexpected error for incident %s", incident_id
         )
         mark_analysis_failed(incident_id, reason="unexpected task error")
+    else:
+        # Phase 3A: the analysis landed — push it live so the frontend can
+        # swap out its pending state without polling. Best-effort.
+        publish_analysis_ready(incident_id)

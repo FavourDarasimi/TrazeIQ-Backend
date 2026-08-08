@@ -162,7 +162,8 @@ class EnqueueDecisionTests(TestCase):
     def test_new_incident_enqueues_exactly_one_task(self, delay):
         self.ingest()
         self.assertEqual(delay.call_count, 1)
-        self.assertEqual(delay.call_args.args[0], Incident.objects.get().pk)
+        # Delayed as str: Celery's JSON serializer can't encode a UUID.
+        self.assertEqual(delay.call_args.args[0], str(Incident.objects.get().pk))
 
     @patch("apps.ai.tasks.analyze_incident.delay")
     def test_pending_analysis_suppresses_reenqueue(self, delay):

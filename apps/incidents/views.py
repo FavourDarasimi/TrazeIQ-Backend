@@ -11,9 +11,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from uuid import UUID
 
+from django.utils import timezone
+
+from apps.realtime.services import publish_incident_event
 from trazeiq_backend.responses import api_success, envelope_schema
 
-from .models import Incident
+from .models import Incident, TimelineEntry
 from .selectors import (
     get_incident_for_user,
     latest_events_by_id,
@@ -215,9 +218,62 @@ class IncidentTimelineView(APIView):
         )
 
 
+class IncidentResolveView(APIView):
+    """POST /api/incidents/{id}/resolve/ — mark an incident resolved.
+
+    Phase 3A stub: flips the status, records the resolved-at timestamp and a
+    ``status_change`` timeline entry, and pushes ``incident.resolved`` on the
+    project's Pusher channel. Reassignment/reopen/comment flows arrive in
+    Phase 4B.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["incidents"],
+        operation_id="incident_resolve",
+        summary="Resolve an incident",
+        request=None,
+        responses={
+            200: envelope_schema(
+                "IncidentResolveOk",
+                payload=_incident_schema("IncidentResolveData"),
+            ),
+            401: envelope_schema("IncidentResolveUnauthorized", error=True),
+            404: envelope_schema("IncidentResolveNotFound", error=True),
+        },
+    )
+    def post(self, request, incident_id: UUID):
+        incident = get_incident_for_user(incident_id, request.user)
+        if incident is None:
+            raise NotFound(INCIDENT_NOT_FOUND)
+
+        if incident.status != Incident.Status.RESOLVED:
+            incident.status = Incident.Status.RESOLVED
+            incident.resolved_at = timezone.now()
+            incident.save(update_fields=["status", "resolved_at"])
+            TimelineEntry.objects.create(
+                incident=incident,
+                kind=TimelineEntry.Kind.STATUS_CHANGE,
+                content="Incident marked resolved",
+                actor=request.user,
+            )
+            publish_incident_event(incident, event_name="incident.resolved")
+
+        events = latest_events_by_id([incident])
+        return api_success(
+            data={
+                "incident": IncidentOutputSerializer(
+                    incident, context={"events": events}
+                ).data
+            }
+        )
+
+
 __all__ = [
     "IncidentDetailView",
     "IncidentListView",
+    "IncidentResolveView",
     "IncidentTimelineView",
     "INCIDENT_NOT_FOUND",
 ]

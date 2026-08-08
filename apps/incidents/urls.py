@@ -5,6 +5,7 @@ from apps.ai.views import IncidentAnalysisView, IncidentAnalyzeView
 from .views import (
     IncidentDetailView,
     IncidentListView,
+    IncidentResolveView,
     IncidentTimelineView,
 )
 
@@ -29,5 +30,10 @@ urlpatterns = [
         "<uuid:incident_id>/analysis/",
         IncidentAnalysisView.as_view(),
         name="incident-analysis",
+    ),
+    path(
+        "<uuid:incident_id>/resolve/",
+        IncidentResolveView.as_view(),
+        name="incident-resolve",
     ),
 ]

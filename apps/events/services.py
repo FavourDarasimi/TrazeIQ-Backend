@@ -4,6 +4,7 @@ from django.utils import timezone
 
 from apps.ai.services import enqueue_analysis_if_needed
 from apps.incidents.models import Incident
+from apps.realtime.services import publish_incident_event
 
 from .models import ErrorGroup, Event
 from .utils import (
@@ -92,5 +93,13 @@ def ingest_event(
     # Spec §6 steps 8–9: enqueue analysis only for a brand-new incident or a
     # stale analysis — never inline, and never allowed to fail the request.
     enqueue_analysis_if_needed(incident_id=incident.pk, is_new=_created)
+
+    # Phase 3A: push the incident lifecycle event live. Best-effort — a
+    # misconfigured/unreachable Pusher must not fail the ingestion request.
+    publish_incident_event(
+        incident,
+        event_name="incident.created" if _created else "incident.updated",
+        event=event,
+    )
 
     return event

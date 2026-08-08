@@ -149,7 +149,10 @@ class IncidentTimelineTests(IncidentSetupMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         entries = response.data["data"]["entries"]
         self.assertEqual(len(entries), 2)
-        self.assertEqual([e["id"] for e in entries], sorted(e["id"] for e in entries))
+        # Oldest first by created_at (UUID ids are random since the UUID
+        # migration — never a meaningful sort key for this assertion).
+        created_at = [e["created_at"] for e in entries]
+        self.assertEqual(created_at, sorted(created_at))
         self.assertTrue(all(e["kind"] == "event" for e in entries))
         self.assertEqual(entries[0]["message"], "boom 1")
         self.assertLess(entries[0]["created_at"], entries[1]["created_at"])

@@ -13,6 +13,7 @@ from uuid import UUID
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.parsers import FormParser, JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -33,6 +34,8 @@ class PusherAuthView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    # pusher-js's ajax transport POSTs application/x-www-form-urlencoded.
+    parser_classes = [JSONParser, FormParser]
 
     @extend_schema(
         tags=["realtime"],

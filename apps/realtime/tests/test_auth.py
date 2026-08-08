@@ -115,6 +115,19 @@ class PusherAuthTestCase(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "VALIDATION_FAILED")
 
+    @override_settings(**AUTH_CREDS)
+    def test_form_encoded_payload_is_supported(self):
+        """pusher-js's ajax transport sends x-www-form-urlencoded, not JSON."""
+        self.client.force_authenticate(user=self.owner)
+        response = self.client.post(
+            "/api/v1/pusher/auth/",
+            data=f"channel_name={self._channel(self.project)}&socket_id=123.456",
+            content_type="application/x-www-form-urlencoded",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("auth", response.json()["data"])
+
+    @override_settings(PUSHER_APP_ID="", PUSHER_KEY="", PUSHER_SECRET="")
     def test_unconfigured_pusher_returns_503(self):
         self.client.force_authenticate(user=self.owner)
         response = self._auth(self._channel(self.project))

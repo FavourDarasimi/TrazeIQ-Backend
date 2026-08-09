@@ -187,6 +187,11 @@ SILENCED_SYSTEM_CHECKS = ["axes.W002", "axes.W003"]
 # Empty in dev: /auth/google/ runs in stub mode (no token verification).
 GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID", default="")
 
+# ---- Team invites (Phase 4A) ----
+# How long an invite link stays valid before the token expires. Only the
+# token's hash is stored (Agent.md rule 4); the raw token is shown once.
+INVITE_TTL_MINUTES = env.int("INVITE_TTL_MINUTES", default=60 * 24 * 7)
+
 # ---- OpenRouter / AI analysis (Phase 2B) ----
 # Empty API key means analysis fails gracefully with status=failed (no retry
 # storm) until a real key is configured. Base URL is the OpenRouter API root.

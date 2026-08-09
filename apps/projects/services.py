@@ -29,6 +29,19 @@ def update_project(project: Project, *, name=None, environment=None) -> Project:
     return project
 
 
+def rotate_project_key(project: Project) -> tuple[Project, str]:
+    """Regenerate the API key: hash and prefix replaced in place.
+
+    The old key stops authenticating the moment ``api_key_hash`` changes.
+    Returns the project together with the raw key (shown exactly once).
+    """
+    raw_key = generate_api_key()
+    project.api_key_hash = hash_api_key(raw_key)
+    project.api_key_prefix = api_key_prefix(raw_key)
+    project.save(update_fields=["api_key_hash", "api_key_prefix"])
+    return project, raw_key
+
+
 def delete_project(project: Project) -> None:
     project.delete()
 

@@ -10,6 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from uuid import UUID
 
+from apps.incidents.permissions import IsIncidentDeveloperOrAbove
 from apps.incidents.selectors import get_incident_for_user
 from trazeiq_backend.responses import api_success, envelope_schema
 
@@ -23,9 +24,13 @@ ANALYSIS_NOT_FOUND = "No analysis exists for this incident."
 
 class IncidentAnalyzeView(APIView):
     """POST /api/v1/incidents/{id}/analyze/ — manually re-trigger root-cause
-    analysis for an incident, bypassing the cache window."""
+    analysis for an incident, bypassing the cache window.
 
-    permission_classes = [IsAuthenticated]
+    A mutation that consumes the AI queue — developer or above (viewers are
+    read-only everywhere).
+    """
+
+    permission_classes = [IsAuthenticated, IsIncidentDeveloperOrAbove]
 
     @extend_schema(
         tags=["ai"],

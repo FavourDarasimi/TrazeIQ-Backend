@@ -1,5 +1,7 @@
 from uuid import UUID
 
+from django.db.models import QuerySet
+
 from .models import Membership, Organization
 
 
@@ -26,3 +28,11 @@ def get_membership(user, organization) -> Membership | None:
     return Membership.objects.filter(
         user=user, organization=organization
     ).first()
+
+
+def list_members(organization) -> QuerySet[Membership]:
+    """All members of an org, oldest first. The caller has already proven
+    membership in the organization itself."""
+    return Membership.objects.filter(organization=organization).order_by(
+        "created_at", "id"
+    )

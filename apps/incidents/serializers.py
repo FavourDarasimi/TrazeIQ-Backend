@@ -1,10 +1,14 @@
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+from django.contrib.auth import get_user_model
+
 from apps.events.models import Event, ErrorGroup
 from apps.projects.models import Project
 
 from .models import Incident
+
+User = get_user_model()
 
 
 class ProjectSummarySerializer(serializers.ModelSerializer):
@@ -54,6 +58,10 @@ class IncidentOutputSerializer(serializers.ModelSerializer):
     project = ProjectSummarySerializer(read_only=True)
     error_group = ErrorGroupSummarySerializer(read_only=True)
     latest_event = serializers.SerializerMethodField()
+    assigned_to = serializers.UUIDField(source="assigned_to_id", read_only=True)
+    assigned_to_email = serializers.EmailField(
+        source="assigned_to.email", read_only=True, allow_null=True
+    )
 
     @extend_schema_field(EventSummarySerializer(allow_null=True))
     def get_latest_event(self, incident):
@@ -76,11 +84,41 @@ class IncidentOutputSerializer(serializers.ModelSerializer):
             "error_group",
             "severity",
             "status",
+            "assigned_to",
+            "assigned_to_email",
             "created_at",
             "resolved_at",
             "latest_event",
         ]
         read_only_fields = fields
+
+
+class IncidentUpdateSerializer(serializers.Serializer):
+    """PATCH /api/incidents/{id}/ — status/severity/assignment (Phase 4A).
+
+    ``assigned_to`` only accepts users who are members of the incident's
+    organization — you can't assign work to an outsider.
+    """
+
+    status = serializers.ChoiceField(
+        choices=Incident.Status.choices, required=False
+    )
+    severity = serializers.ChoiceField(
+        choices=Incident.Severity.choices, required=False
+    )
+    assigned_to = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.none(),
+        required=False,
+        allow_null=True,
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        organization_id = self.context.get("organization_id")
+        if organization_id is not None:
+            self.fields["assigned_to"].queryset = User.objects.filter(
+                memberships__organization_id=organization_id
+            )
 
 
 class TimelineEntryOutputSerializer(serializers.Serializer):

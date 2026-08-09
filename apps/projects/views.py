@@ -3,6 +3,7 @@ from rest_framework import serializers, status
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
+from uuid import UUID
 
 from apps.organizations.selectors import (
     get_organization_for_user,
@@ -11,12 +12,14 @@ from apps.organizations.selectors import (
 
 from trazeiq_backend.responses import api_success, envelope_schema
 
+from .permissions import IsProjectOwnerOrAdmin
 from .selectors import get_project_for_user, list_projects_for_user
 from .serializers import ProjectInputSerializer, ProjectOutputSerializer
 from .services import (
     create_project,
     delete_project,
     integration_snippet,
+    rotate_project_key,
     update_project,
 )
 
@@ -33,6 +36,27 @@ def _project_schema(name: str):
 
 class ProjectListView(APIView):
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        # Creating a project is org management — owner/admin only. The org is
+        # picked in the request body (or defaults to the caller's first org),
+        # so the permission resolves it via get_permission_org_id below.
+        if self.request.method == "POST":
+            return [IsAuthenticated(), IsProjectOwnerOrAdmin()]
+        return super().get_permissions()
+
+    def get_permission_org_id(self, request):
+        """The target org for the create permission: the body's organization,
+        or the caller's first org — mirroring the default the create logic
+        uses, so permission and view always agree."""
+        raw = request.data.get("organization")
+        if raw:
+            try:
+                return UUID(str(raw))
+            except (TypeError, ValueError, AttributeError):
+                return None
+        organization = list_organizations_for_user(request.user).first()
+        return organization.id if organization else None
 
     @extend_schema(
         tags=["projects"],
@@ -123,6 +147,13 @@ class ProjectListView(APIView):
 class ProjectDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
+    def get_permissions(self):
+        # Reads are open to any member; writes are org management
+        # (owner/admin only, enforced at the permission-class level).
+        if self.request.method in ("PATCH", "DELETE"):
+            return [IsAuthenticated(), IsProjectOwnerOrAdmin()]
+        return super().get_permissions()
+
     @extend_schema(
         tags=["projects"],
         operation_id="projects_retrieve",
@@ -198,9 +229,63 @@ class ProjectDetailView(APIView):
         return api_success(status=status.HTTP_204_NO_CONTENT)
 
 
+class ProjectRotateKeyView(APIView):
+    """POST /api/projects/{id}/rotate-key/ — regenerate the API key.
+
+    Owner/admin only. The old key stops authenticating the moment the hash is
+    replaced; the new raw key is returned exactly once.
+    """
+
+    permission_classes = [IsAuthenticated, IsProjectOwnerOrAdmin]
+
+    @extend_schema(
+        tags=["projects"],
+        operation_id="projects_rotate_key",
+        summary="Rotate the API key",
+        description=(
+            "Regenerates the project's API key: the stored hash is replaced "
+            "and the previous key stops working immediately. The new raw key "
+            "is returned exactly once, in this response."
+        ),
+        request=None,
+        responses={
+            200: envelope_schema(
+                "ProjectRotateKeyOk",
+                payload=inline_serializer(
+                    "ProjectRotateKeyData",
+                    fields={
+                        "project": ProjectOutputSerializer(),
+                        "api_key": serializers.CharField(),
+                        "integration_snippet": serializers.CharField(),
+                    },
+                ),
+            ),
+            401: envelope_schema("ProjectRotateKeyUnauthorized", error=True),
+            403: envelope_schema("ProjectRotateKeyForbidden", error=True),
+            404: envelope_schema("ProjectRotateKeyNotFound", error=True),
+        },
+    )
+    def post(self, request, pk):
+        project = get_project_for_user(pk, request.user)
+        if project is None:
+            raise NotFound(PROJECT_NOT_FOUND)
+
+        project, raw_key = rotate_project_key(project)
+        return api_success(
+            data={
+                "project": ProjectOutputSerializer(project).data,
+                "api_key": raw_key,
+                "integration_snippet": integration_snippet(
+                    raw_key, project.environment
+                ),
+            }
+        )
+
+
 __all__ = [
     "ProjectDetailView",
     "ProjectListView",
+    "ProjectRotateKeyView",
     "ORGANIZATION_NOT_FOUND",
     "PROJECT_NOT_FOUND",
 ]

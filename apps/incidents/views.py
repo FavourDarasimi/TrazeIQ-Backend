@@ -17,6 +17,7 @@ from apps.realtime.services import publish_incident_event
 from trazeiq_backend.responses import api_success, envelope_schema
 
 from .models import Incident, TimelineEntry
+from .permissions import IsIncidentDeveloperOrAbove
 from .selectors import (
     get_incident_for_user,
     latest_events_by_id,
@@ -25,8 +26,10 @@ from .selectors import (
 )
 from .serializers import (
     IncidentOutputSerializer,
+    IncidentUpdateSerializer,
     TimelineEntryOutputSerializer,
 )
+from .services import update_incident
 
 INCIDENT_NOT_FOUND = "This incident does not exist."
 
@@ -129,9 +132,18 @@ class IncidentListView(APIView):
 
 class IncidentDetailView(APIView):
     """GET /api/incidents/{id}/ — one incident with its group summary and the
-    latest raw occurrence; 404 if not in the caller's organization."""
+    latest raw occurrence; 404 if not in the caller's organization.
+
+    PATCH /api/incidents/{id}/ — update status/severity/assignment
+    (developer or above; viewers are read-only).
+    """
 
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method == "PATCH":
+            return [IsAuthenticated(), IsIncidentDeveloperOrAbove()]
+        return super().get_permissions()
 
     @extend_schema(
         tags=["incidents"],
@@ -150,6 +162,60 @@ class IncidentDetailView(APIView):
         incident = get_incident_for_user(incident_id, request.user)
         if incident is None:
             raise NotFound(INCIDENT_NOT_FOUND)
+        events = latest_events_by_id([incident])
+        return api_success(
+            data={
+                "incident": IncidentOutputSerializer(
+                    incident, context={"events": events}
+                ).data
+            }
+        )
+
+    @extend_schema(
+        tags=["incidents"],
+        operation_id="incidents_update",
+        summary="Update an incident",
+        description=(
+            "Update status, severity and/or assignment. Only organization "
+            "members can be assigned. Any effective change appends a "
+            "``status_change`` timeline entry and pushes an "
+            "``incident.updated`` realtime event."
+        ),
+        request=IncidentUpdateSerializer,
+        responses={
+            200: envelope_schema(
+                "IncidentUpdateOk",
+                payload=_incident_schema("IncidentUpdateData"),
+            ),
+            400: envelope_schema("IncidentUpdateValidation", error=True),
+            401: envelope_schema("IncidentUpdateUnauthorized", error=True),
+            403: envelope_schema("IncidentUpdateForbidden", error=True),
+            404: envelope_schema("IncidentUpdateNotFound", error=True),
+        },
+    )
+    def patch(self, request, incident_id: UUID):
+        incident = get_incident_for_user(incident_id, request.user)
+        if incident is None:
+            raise NotFound(INCIDENT_NOT_FOUND)
+
+        serializer = IncidentUpdateSerializer(
+            data=request.data,
+            partial=True,
+            context={"organization_id": incident.project.organization_id},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        # Only the fields actually present in the request body are applied —
+        # absent fields must stay untouched (a PATCH of {status} alone must
+        # not clear severity or the assignment).
+        updates = {
+            key: serializer.validated_data[key]
+            for key in ("status", "severity", "assigned_to")
+            if key in serializer.validated_data
+        }
+        incident = update_incident(incident, actor=request.user, **updates)
+        publish_incident_event(incident, event_name="incident.updated")
+
         events = latest_events_by_id([incident])
         return api_success(
             data={
@@ -227,7 +293,7 @@ class IncidentResolveView(APIView):
     Phase 4B.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsIncidentDeveloperOrAbove]
 
     @extend_schema(
         tags=["incidents"],

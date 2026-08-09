@@ -7,7 +7,7 @@ from django.db.models import OuterRef, QuerySet, Subquery
 
 from apps.events.models import Event
 
-from .models import Incident
+from .models import Incident, TimelineEntry
 
 
 def _latest_event_id_subquery():
@@ -81,13 +81,17 @@ def latest_events_by_id(incidents) -> dict[UUID, Event]:
     return {event.id: event for event in Event.objects.filter(id__in=ids)}
 
 
-def list_incident_timeline(incident) -> QuerySet[Event]:
-    """The incident's occurrence feed, oldest first.
+def list_incident_timeline(incident) -> list[dict]:
+    """The incident's full history as uniform timeline rows, oldest first.
 
-    The incident is already tenant-scoped by the caller; the events it owns
-    are the raw occurrences of its error group.
+    Phase 1F served the raw occurrence feed only; Phase 4B merges the
+    error group's ``Event`` rows (``kind="event"``) with the incident's
+    ``TimelineEntry`` rows (``comment`` / ``status_change`` /
+    ``ai_analysis``) into one chronological feed. Every row carries the
+    full field set — event-only fields default to ``""`` and actor-less
+    rows to ``None`` so the serializer shape never varies by kind.
     """
-    return (
+    events = (
         Event.objects.filter(error_group=incident.error_group)
         .order_by("created_at", "id")
         .only(
@@ -99,3 +103,38 @@ def list_incident_timeline(incident) -> QuerySet[Event]:
             "created_at",
         )
     )
+    entries = (
+        TimelineEntry.objects.filter(incident=incident)
+        .select_related("actor")
+        .order_by("created_at", "id")
+    )
+    rows = [
+        {
+            "id": event.id,
+            "kind": TimelineEntry.Kind.EVENT,
+            "level": event.level,
+            "message": event.message,
+            "environment": event.environment,
+            "service": event.service,
+            "content": "",
+            "actor_email": None,
+            "created_at": event.created_at,
+        }
+        for event in events
+    ]
+    rows += [
+        {
+            "id": entry.id,
+            "kind": entry.kind,
+            "level": "",
+            "message": "",
+            "environment": "",
+            "service": "",
+            "content": entry.content,
+            "actor_email": entry.actor.email if entry.actor else None,
+            "created_at": entry.created_at,
+        }
+        for entry in entries
+    ]
+    rows.sort(key=lambda row: row["created_at"])
+    return rows

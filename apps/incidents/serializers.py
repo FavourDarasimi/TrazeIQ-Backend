@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from apps.events.models import Event, ErrorGroup
 from apps.projects.models import Project
 
-from .models import Incident
+from .models import Incident, TimelineEntry
 
 User = get_user_model()
 
@@ -122,17 +122,41 @@ class IncidentUpdateSerializer(serializers.Serializer):
 
 
 class TimelineEntryOutputSerializer(serializers.Serializer):
-    """One row of the incident timeline feed.
+    """One row of the incident timeline feed — Phase 4B mixes all four kinds.
 
-    Phase 1F serves the static occurrence feed (``kind="event"`` rows only).
-    Later phases extend ``kind`` with ``comment`` / ``status_change`` /
-    ``ai_analysis`` — the shape below is their contract.
+    Rows come pre-shaped from :func:`apps.incidents.selectors.list_incident_timeline`
+    as uniform dicts: ``event`` rows carry level/message/environment/service
+    (``content``/``actor_email`` empty), the other kinds carry content and an
+    optional actor email. Defaults keep the shape constant across kinds.
     """
 
     id = serializers.UUIDField()
-    kind = serializers.CharField()
-    level = serializers.CharField()
-    message = serializers.CharField()
-    environment = serializers.CharField()
-    service = serializers.CharField()
+    kind = serializers.ChoiceField(choices=TimelineEntry.Kind.choices)
+    level = serializers.CharField(required=False, allow_blank=True, default="")
+    message = serializers.CharField(required=False, allow_blank=True, default="")
+    environment = serializers.CharField(
+        required=False, allow_blank=True, default=""
+    )
+    service = serializers.CharField(required=False, allow_blank=True, default="")
+    content = serializers.CharField(required=False, allow_blank=True, default="")
+    actor_email = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField()
+
+    @extend_schema_field(serializers.EmailField(allow_null=True))
+    def get_actor_email(self, obj):
+        """Timeline rows arrive as pre-shaped dicts; the comment POST
+        response serializes a live model. Handle both."""
+        if isinstance(obj, dict):
+            return obj.get("actor_email")
+        return obj.actor.email if getattr(obj, "actor", None) else None
+
+
+class CommentInputSerializer(serializers.Serializer):
+    """POST /api/incidents/{id}/comments/ body — just the comment text."""
+
+    content = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        trim_whitespace=True,
+        max_length=5000,
+    )

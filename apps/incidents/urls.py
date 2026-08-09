@@ -3,6 +3,7 @@ from django.urls import path
 from apps.ai.views import IncidentAnalysisView, IncidentAnalyzeView
 
 from .views import (
+    IncidentCommentView,
     IncidentDetailView,
     IncidentListView,
     IncidentResolveView,
@@ -20,6 +21,11 @@ urlpatterns = [
         "<uuid:incident_id>/timeline/",
         IncidentTimelineView.as_view(),
         name="incident-timeline",
+    ),
+    path(
+        "<uuid:incident_id>/comments/",
+        IncidentCommentView.as_view(),
+        name="incident-comments",
     ),
     path(
         "<uuid:incident_id>/analyze/",

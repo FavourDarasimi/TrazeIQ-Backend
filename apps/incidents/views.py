@@ -25,11 +25,12 @@ from .selectors import (
     list_incidents_for_user,
 )
 from .serializers import (
+    CommentInputSerializer,
     IncidentOutputSerializer,
     IncidentUpdateSerializer,
     TimelineEntryOutputSerializer,
 )
-from .services import update_incident
+from .services import add_comment, update_incident
 
 INCIDENT_NOT_FOUND = "This incident does not exist."
 
@@ -227,11 +228,11 @@ class IncidentDetailView(APIView):
 
 
 class IncidentTimelineView(APIView):
-    """GET /api/incidents/{id}/timeline/ — the occurrence feed.
+    """GET /api/incidents/{id}/timeline/ — the incident's full history.
 
-    Phase 1F serves static ``kind="event"`` rows (the raw occurrences of the
-    incident's error group, oldest first); comments/status changes/AI
-    analysis extend the feed in later phases.
+    Phase 4B: mixes all four TimelineEntry kinds — event occurrences (the
+    raw events of the error group), comments, status changes, and AI
+    analyses — into one chronological feed, oldest first.
     """
 
     permission_classes = [IsAuthenticated]
@@ -241,9 +242,10 @@ class IncidentTimelineView(APIView):
         operation_id="incident_timeline",
         summary="Incident timeline",
         description=(
-            "Chronological occurrence feed for the incident's error group. "
-            "Future phases add comment / status_change / ai_analysis entry "
-            "kinds to the same shape."
+            "Chronological history for the incident: event occurrences, "
+            "comments, status changes and AI analyses. Event rows carry "
+            "level/message/environment/service; the other kinds carry "
+            "content and an optional actor email."
         ),
         responses={
             200: envelope_schema(
@@ -265,32 +267,74 @@ class IncidentTimelineView(APIView):
         incident = get_incident_for_user(incident_id, request.user)
         if incident is None:
             raise NotFound(INCIDENT_NOT_FOUND)
-        events = list_incident_timeline(incident)
         return api_success(
             data={
-                "entries": [
-                    {
-                        "id": event.id,
-                        "kind": "event",
-                        "level": event.level,
-                        "message": event.message,
-                        "environment": event.environment,
-                        "service": event.service,
-                        "created_at": event.created_at,
-                    }
-                    for event in events
-                ]
+                "entries": TimelineEntryOutputSerializer(
+                    list_incident_timeline(incident), many=True
+                ).data
             }
+        )
+
+
+class IncidentCommentView(APIView):
+    """POST /api/incidents/{id}/comments/ — append a comment to the timeline.
+
+    Developer or above. The entry appears in the timeline immediately with
+    the caller as actor; no realtime event is fired — clients re-read the
+    feed (comments are part of the incident's history, not live state).
+    """
+
+    permission_classes = [IsAuthenticated, IsIncidentDeveloperOrAbove]
+
+    @extend_schema(
+        tags=["incidents"],
+        operation_id="incident_create_comment",
+        summary="Comment on an incident",
+        description=(
+            "Append a comment to the incident's timeline (developer or "
+            "above; viewers are read-only)."
+        ),
+        request=CommentInputSerializer,
+        responses={
+            201: envelope_schema(
+                "IncidentCommentCreated",
+                payload=inline_serializer(
+                    "IncidentCommentData",
+                    fields={"entry": TimelineEntryOutputSerializer()},
+                ),
+            ),
+            400: envelope_schema("IncidentCommentValidation", error=True),
+            401: envelope_schema("IncidentCommentUnauthorized", error=True),
+            403: envelope_schema("IncidentCommentForbidden", error=True),
+            404: envelope_schema("IncidentCommentNotFound", error=True),
+        },
+    )
+    def post(self, request, incident_id: UUID):
+        incident = get_incident_for_user(incident_id, request.user)
+        if incident is None:
+            raise NotFound(INCIDENT_NOT_FOUND)
+
+        serializer = CommentInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        entry = add_comment(
+            incident,
+            content=serializer.validated_data["content"],
+            actor=request.user,
+        )
+        return api_success(
+            data={"entry": TimelineEntryOutputSerializer(entry).data},
+            status=status.HTTP_201_CREATED,
         )
 
 
 class IncidentResolveView(APIView):
     """POST /api/incidents/{id}/resolve/ — mark an incident resolved.
 
-    Phase 3A stub: flips the status, records the resolved-at timestamp and a
+    Flips the status, records the resolved-at timestamp and a
     ``status_change`` timeline entry, and pushes ``incident.resolved`` on the
-    project's Pusher channel. Reassignment/reopen/comment flows arrive in
-    Phase 4B.
+    project's Pusher channel (idempotent — resolving an already-resolved
+    incident is a no-op). Status/severity/assignment updates via PATCH and
+    timeline comments arrive in Phases 4A/4B.
     """
 
     permission_classes = [IsAuthenticated, IsIncidentDeveloperOrAbove]
@@ -337,6 +381,7 @@ class IncidentResolveView(APIView):
 
 
 __all__ = [
+    "IncidentCommentView",
     "IncidentDetailView",
     "IncidentListView",
     "IncidentResolveView",

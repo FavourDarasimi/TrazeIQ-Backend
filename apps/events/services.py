@@ -3,6 +3,7 @@ from django.db.models import F
 from django.utils import timezone
 
 from apps.ai.services import enqueue_analysis_if_needed
+from apps.alerts.services import enqueue_alert_evaluation
 from apps.incidents.models import Incident
 from apps.realtime.services import publish_incident_event
 
@@ -101,5 +102,10 @@ def ingest_event(
         event_name="incident.created" if _created else "incident.updated",
         event=event,
     )
+
+    # Phase 4C: alert evaluation runs async from the same point where the
+    # lifecycle event fires; cooldown enforcement prevents alert storms.
+    # Best-effort like the pusher call — never allowed to fail ingestion.
+    enqueue_alert_evaluation(incident.pk)
 
     return event

@@ -13,6 +13,7 @@ from uuid import UUID
 
 from django.utils import timezone
 
+from apps.alerts.services import enqueue_alert_evaluation
 from apps.realtime.services import publish_incident_event
 from trazeiq_backend.responses import api_success, envelope_schema
 
@@ -216,6 +217,9 @@ class IncidentDetailView(APIView):
         }
         incident = update_incident(incident, actor=request.user, **updates)
         publish_incident_event(incident, event_name="incident.updated")
+        # Phase 4C: a PATCH may have changed severity/status — re-evaluate
+        # alert rules async (cooldown dedups the repeats). Best-effort.
+        enqueue_alert_evaluation(incident.pk)
 
         events = latest_events_by_id([incident])
         return api_success(

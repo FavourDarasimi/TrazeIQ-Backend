@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "apps.incidents",
     "apps.ai",
     "apps.alerts",
+    "apps.integrations",
     "apps.notifications",
     "apps.analytics",
     "apps.realtime",
@@ -237,6 +238,22 @@ PUSHER_USE_TLS = env.bool("PUSHER_USE_TLS", default=True)
 PUSHER_PUBLISH_TIMEOUT_SECONDS = env.float(
     "PUSHER_PUBLISH_TIMEOUT_SECONDS", default=2.0
 )
+
+# ---- Slack integration (Phase 4D) ----
+# Empty client id/secret → the connect endpoint fails with
+# SLACK_NOT_CONFIGURED (same dev-safe convention as Pusher). Access tokens
+# received from Slack are stored encrypted at rest (django-cryptography).
+SLACK_CLIENT_ID = env("SLACK_CLIENT_ID", default="")
+SLACK_CLIENT_SECRET = env("SLACK_CLIENT_SECRET", default="")
+SLACK_OAUTH_URL = env("SLACK_OAUTH_URL", default="https://slack.com/api/oauth.v2.access")
+SLACK_CHAT_POST_URL = env("SLACK_CHAT_POST_URL", default="https://slack.com/api/chat.postMessage")
+SLACK_API_TIMEOUT_SECONDS = env.float("SLACK_API_TIMEOUT_SECONDS", default=5.0)
+
+# ---- Alert dispatch (Phase 4D) ----
+# Base URL used to build incident links inside alert messages.
+APP_BASE_URL = env("APP_BASE_URL", default="http://localhost:3000")
+# Outbound dispatch (webhook POSTs, Slack calls) must never hang the worker.
+DISPATCH_TIMEOUT_SECONDS = env.float("DISPATCH_TIMEOUT_SECONDS", default=5.0)
 
 # ---- Django REST Framework ----
 REST_FRAMEWORK = {

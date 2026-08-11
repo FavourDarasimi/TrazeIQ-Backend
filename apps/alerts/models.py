@@ -59,8 +59,13 @@ class AlertLog(UUIDModel):
 
     Only real dispatches are recorded — evaluations suppressed by the
     cooldown window leave no trace, so the log stays a faithful "alerts
-    actually sent" record.
+    actually sent" record. ``status`` distinguishes delivered alerts from
+    failed delivery attempts (which keep their error detail for the UI).
     """
+
+    class Status(models.TextChoices):
+        DISPATCHED = "dispatched", "Dispatched"
+        FAILED = "failed", "Failed"
 
     rule = models.ForeignKey(
         AlertRule,
@@ -72,6 +77,10 @@ class AlertLog(UUIDModel):
         on_delete=models.CASCADE,
         related_name="alert_logs",
     )
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.DISPATCHED
+    )
+    error = models.CharField(max_length=500, blank=True, default="")
     dispatched_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

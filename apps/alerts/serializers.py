@@ -5,6 +5,9 @@ to a dict over ``severity`` / ``status`` with valid choice values, so a
 mis-typed rule fails loudly at creation instead of silently never firing.
 """
 
+import re
+
+from django.core.exceptions import ValidationError as DjangoValidationError
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
@@ -12,6 +15,7 @@ from apps.incidents.models import Incident
 from apps.projects.models import Project
 
 from .models import AlertLog, AlertRule
+from .security import validate_dispatch_target_url
 
 SUPPORTED_CONDITION_KEYS = ("severity", "status")
 
@@ -19,6 +23,8 @@ _CONDITION_CHOICES = {
     "severity": {choice[0] for choice in Incident.Severity.choices},
     "status": {choice[0] for choice in Incident.Status.choices},
 }
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class _RuleProjectSummary(serializers.Serializer):
@@ -92,6 +98,31 @@ class AlertRuleInputSerializer(serializers.ModelSerializer):
                 )
         return value
 
+    def validate(self, attrs):
+        # PATCH sends only changed fields — fall back to the instance.
+        channel = attrs.get("channel") or getattr(self.instance, "channel", None)
+        target = attrs.get("target") or getattr(self.instance, "target", None)
+        if target:
+            if channel == "email":
+                if not _EMAIL_RE.match(target):
+                    raise serializers.ValidationError(
+                        {"target": "Must be a valid email address."}
+                    )
+            elif channel == "webhook":
+                self._validate_url_target(target)
+            elif channel == "slack":
+                if target.startswith(("http://", "https://")):
+                    self._validate_url_target(target)
+        return attrs
+
+    def _validate_url_target(self, target):
+        """Fail fast on private/reserved targets — SSRF defense (Phase 4D)
+        runs at rule creation, then again at dispatch time."""
+        try:
+            validate_dispatch_target_url(target)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"target": exc.message})
+
 
 class AlertRuleOutputSerializer(serializers.ModelSerializer):
     """Read shape for rules — the rule plus its project name."""
@@ -132,6 +163,8 @@ class AlertLogOutputSerializer(serializers.ModelSerializer):
             "id",
             "rule",
             "incident",
+            "status",
+            "error",
             "dispatched_at",
         ]
         read_only_fields = fields

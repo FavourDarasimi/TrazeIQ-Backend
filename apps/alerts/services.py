@@ -37,13 +37,17 @@ def rule_matches(rule: AlertRule, incident: Incident) -> bool:
 
 
 def evaluate_incident(incident: Incident) -> int:
-    """Score the incident against the project's rules and record one dispatch
+    """Score the incident against the project's rules and dispatch one alert
     per matched rule that is outside its cooldown window.
 
-    Returns the number of dispatches logged. Suppressed (in-cooldown)
-    matches are skipped without logging — the AlertLog table stays a record
-    of actual dispatch attempts.
+    Returns the number of dispatch attempts logged. Suppressed (in-cooldown)
+    matches are skipped without logging; a failed delivery is still logged
+    with ``status=failed`` and the error detail, so the AlertLog table stays
+    a faithful record of attempts. Dispatch never raises — the queue worker
+    must not die because a webhook is down.
     """
+    from .dispatchers import dispatch
+
     now = timezone.now()
     dispatches = 0
     for rule in AlertRule.objects.filter(project=incident.project_id):
@@ -54,8 +58,21 @@ def evaluate_incident(incident: Incident) -> int:
             rule=rule, incident=incident, dispatched_at__gte=cutoff
         ).exists():
             continue
-        AlertLog.objects.create(rule=rule, incident=incident)
+        log = AlertLog.objects.create(rule=rule, incident=incident)
         dispatches += 1
+        try:
+            dispatch(rule, incident)
+        except Exception as exc:  # noqa: BLE001 — one bad channel must not
+            # take down the other rules or the worker.
+            log.status = AlertLog.Status.FAILED
+            log.error = str(exc)[:500]
+            log.save(update_fields=["status", "error"])
+            logger.warning(
+                "dispatch failed for rule %s incident %s: %s",
+                rule.id,
+                incident.id,
+                exc,
+            )
     return dispatches
 
 

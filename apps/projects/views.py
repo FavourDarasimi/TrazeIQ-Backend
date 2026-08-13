@@ -10,6 +10,8 @@ from apps.organizations.selectors import (
     list_organizations_for_user,
 )
 
+from apps.auditlog.models import AuditAction
+from apps.auditlog.services import record_audit_log
 from trazeiq_backend.responses import api_success, envelope_schema
 
 from .permissions import IsProjectOwnerOrAdmin
@@ -271,6 +273,12 @@ class ProjectRotateKeyView(APIView):
             raise NotFound(PROJECT_NOT_FOUND)
 
         project, raw_key = rotate_project_key(project)
+        record_audit_log(
+            actor=request.user,
+            organization=project.organization,
+            action=AuditAction.KEY_ROTATED,
+            target=f"Rotated API key for project '{project.name}'",
+        )
         return api_success(
             data={
                 "project": ProjectOutputSerializer(project).data,

@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     "apps.integrations",
     "apps.notifications",
     "apps.analytics",
+    "apps.auditlog",
     "apps.realtime",
 ]
 

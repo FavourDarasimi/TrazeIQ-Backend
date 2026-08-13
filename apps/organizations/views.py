@@ -26,6 +26,9 @@ from .serializers import (
     OrganizationOutputSerializer,
 )
 from .services import accept_invite, create_invite, create_organization
+from apps.auditlog.models import AuditAction
+from apps.auditlog.services import record_audit_log
+from .models import Membership, MembershipRole
 
 ORG_NOT_FOUND = "This organization does not exist."
 
@@ -309,11 +312,56 @@ class InviteAcceptView(APIView):
         return api_error(code, message, status=http_status)
 
 
+class OrganizationMemberRemoveView(APIView):
+    """DELETE /api/organizations/{id}/members/{user_id}/ — remove a member.
+
+    Owner/admin only. Deletes the membership and writes an audit-log entry
+    recording who removed whom.
+    """
+
+    permission_classes = [IsAuthenticated, IsOrgOwnerOrAdmin]
+
+    @extend_schema(
+        tags=["organizations"],
+        operation_id="organizations_members_remove",
+        summary="Remove a member",
+        description=(
+            "Delete a membership from the organization. Only owners/admins may "
+            "do this; the action is recorded in the audit log."
+        ),
+        responses={
+            200: envelope_schema("OrganizationMemberRemoveOk"),
+            401: envelope_schema("OrganizationMemberRemoveUnauthorized", error=True),
+            403: envelope_schema("OrganizationMemberRemoveForbidden", error=True),
+            404: envelope_schema("OrganizationMemberRemoveNotFound", error=True),
+        },
+    )
+    def delete(self, request, pk, user_id):
+        organization = get_organization_for_user(pk, request.user)
+        if organization is None:
+            raise NotFound(ORG_NOT_FOUND)
+        membership = Membership.objects.filter(
+            organization_id=pk, user_id=user_id
+        ).first()
+        if membership is None:
+            raise NotFound("This member does not belong to the organization.")
+        removed_email = membership.user.email
+        membership.delete()
+        record_audit_log(
+            actor=request.user,
+            organization=organization,
+            action=AuditAction.MEMBER_REMOVED,
+            target=f"Removed member {removed_email}",
+        )
+        return api_success(data={}, message="Member removed.")
+
+
 __all__ = [
     "InviteAcceptView",
     "OrganizationDetailView",
     "OrganizationInviteView",
     "OrganizationListView",
+    "OrganizationMemberRemoveView",
     "OrganizationMembersView",
     "ORG_NOT_FOUND",
 ]

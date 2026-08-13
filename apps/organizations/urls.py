@@ -13,6 +13,11 @@ urlpatterns = [
         name="members",
     ),
     path(
+        "<uuid:pk>/members/<uuid:user_id>/",
+        views.OrganizationMemberRemoveView.as_view(),
+        name="member_remove",
+    ),
+    path(
         "<uuid:pk>/invite/",
         views.OrganizationInviteView.as_view(),
         name="invite",

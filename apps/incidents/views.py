@@ -14,6 +14,8 @@ from uuid import UUID
 from django.utils import timezone
 
 from apps.alerts.services import enqueue_alert_evaluation
+from apps.auditlog.models import AuditAction
+from apps.auditlog.services import record_audit_log
 from apps.realtime.services import publish_incident_event
 from trazeiq_backend.responses import api_success, envelope_schema
 
@@ -374,6 +376,12 @@ class IncidentResolveView(APIView):
                 actor=request.user,
             )
             publish_incident_event(incident, event_name="incident.resolved")
+            record_audit_log(
+                actor=request.user,
+                organization=incident.project.organization,
+                action=AuditAction.INCIDENT_RESOLVED,
+                target=f"Resolved incident '{incident.error_group.title}'",
+            )
 
         events = latest_events_by_id([incident])
         return api_success(

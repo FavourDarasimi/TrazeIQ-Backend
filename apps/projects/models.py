@@ -23,6 +23,13 @@ class Project(UUIDModel):
     api_key_hash = models.CharField(max_length=64, db_index=True)
     api_key_prefix = models.CharField(max_length=16, editable=False)
     environment = models.CharField(max_length=32, default="production")
+    events_per_minute = models.PositiveIntegerField(
+        default=1000,
+        help_text=(
+            "Per-project ingestion cap (events/minute). Enforced by "
+            "EventPerKeyRateThrottle; overrides the global EVENT_THROTTLE_KEY."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

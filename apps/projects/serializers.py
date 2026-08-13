@@ -9,6 +9,12 @@ class ProjectInputSerializer(serializers.Serializer):
     environment = serializers.CharField(
         max_length=32, required=False, default="production"
     )
+    events_per_minute = serializers.IntegerField(
+        min_value=1,
+        max_value=1_000_000,
+        required=False,
+        help_text="Per-project ingestion cap (events/minute).",
+    )
 
 
 class ProjectOutputSerializer(serializers.ModelSerializer):
@@ -22,6 +28,7 @@ class ProjectOutputSerializer(serializers.ModelSerializer):
             "name",
             "api_key_prefix",
             "environment",
+            "events_per_minute",
             "created_at",
         ]
         read_only_fields = ["id", "organization", "api_key_prefix", "created_at"]

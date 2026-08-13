@@ -11,7 +11,7 @@ from .permissions import IsAPIKeyAuthenticated
 from .serializers import EventInputSerializer, EventOutputSerializer
 from .selectors import get_event_for_user, list_events_for_user, parse_date_filter
 from .services import ingest_event
-from .throttles import EventPerKeyRateThrottle, EventScopedRateThrottle
+from .throttles import EventPerKeyRateThrottle, EventPerIpRateThrottle
 
 EVENT_NOT_FOUND = "This event does not exist."
 
@@ -51,7 +51,7 @@ class EventIngestAndListView(APIView):
 
     def get_throttles(self):
         if self._is_ingest():
-            return [EventScopedRateThrottle(), EventPerKeyRateThrottle()]
+            return [EventPerIpRateThrottle(), EventPerKeyRateThrottle()]
         return super().get_throttles()
 
     @extend_schema(

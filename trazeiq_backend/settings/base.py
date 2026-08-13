@@ -162,7 +162,7 @@ EVENT_MAX_PAYLOAD_BYTES = env.int("EVENT_MAX_PAYLOAD_BYTES", default=100_000)
 # credential stuffing with stolen keys) and a per-key cap (protects the
 # endpoint from one misbehaving integration key starving everyone else).
 EVENT_THROTTLE_IP = env("EVENT_THROTTLE_IP", default="5000/min")
-EVENT_THROTTLE_KEY = env("EVENT_THROTTLE_KEY", default="30/s")
+EVENT_THROTTLE_KEY = env("EVENT_THROTTLE_KEY", default="1000/min")
 
 # ---- Brute-force lockout (django-axes) ----
 # Tracks failed logins per (IP, username) pair. The auth login view checks

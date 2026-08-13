@@ -216,6 +216,84 @@ class Ingest413Tests(IngestSetupMixin, TestCase):
         self.assertEqual(Event.objects.count(), 0)
         self.assertEqual(ErrorGroup.objects.count(), 0)
 
+    @override_settings(EVENT_MAX_PAYLOAD_BYTES=1024)
+    def test_payload_at_cap_is_accepted(self):
+        # Exactly at the cap (message + stacktrace) must succeed.
+        response = self.client.post(
+            "/api/v1/events/",
+            {"message": "x" * 1024, "stacktrace": ""},
+            format="json",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(Event.objects.count(), 1)
+
+    @override_settings(EVENT_MAX_PAYLOAD_BYTES=1024)
+    def test_payload_one_byte_over_cap_rejected(self):
+        # One byte over the cap is rejected, with nothing persisted.
+        response = self.client.post(
+            "/api/v1/events/",
+            {"message": "x" * 1025, "stacktrace": ""},
+            format="json",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(response.data["error"]["code"], "PAYLOAD_TOO_LARGE")
+        self.assertEqual(Event.objects.count(), 0)
+
+
+class IngestThrottleTests(IngestSetupMixin, TestCase):
+    """Phase 5A: Redis-backed per-key/per-IP caps with Retry-After."""
+
+    @override_settings(EVENT_THROTTLE_KEY="100000/min")
+    def test_per_key_limit_returns_429_with_retry_after(self):
+        # The per-project cap (set low) is the one enforced on the key.
+        from apps.projects.models import Project
+
+        Project.objects.filter(id=self.project["id"]).update(events_per_minute=3)
+        for _ in range(3):
+            ok = self.ingest()
+            self.assertEqual(ok.status_code, 201)
+        blocked = self.ingest()
+        self.assertEqual(blocked.status_code, 429)
+        self.assertEqual(blocked.data["error"]["code"], "TOO_MANY_REQUESTS")
+        self.assertIn("Retry-After", blocked.headers)
+        self.assertTrue(int(blocked.headers["Retry-After"]) > 0)
+        self.assertLessEqual(Event.objects.count(), 3)
+
+    @override_settings(EVENT_THROTTLE_KEY="100000/min")
+    def test_per_project_limit_overrides_global(self):
+        # Lower the project's own cap; it must win over the global setting.
+        from apps.projects.models import Project
+
+        project = Project.objects.get(id=self.project["id"])
+        project.events_per_minute = 2
+        project.save(update_fields=["events_per_minute"])
+
+        for _ in range(2):
+            ok = self.ingest()
+            self.assertEqual(ok.status_code, 201)
+        blocked = self.ingest()
+        self.assertEqual(blocked.status_code, 429)
+        self.assertEqual(blocked.data["error"]["code"], "TOO_MANY_REQUESTS")
+
+    @override_settings(EVENT_THROTTLE_KEY="100000/min", EVENT_THROTTLE_IP="2/min")
+    def test_per_ip_limit_is_independent_of_key(self):
+        # A second project under the same IP still hits the IP cap at 2.
+        other = create_project(self.client, name="Other")
+        other_headers = {"X-API-Key": other["api_key"]}
+
+        first = self.ingest()
+        self.assertEqual(first.status_code, 201)
+        second = self.client.post(
+            "/api/v1/events/", {"message": "boom"}, format="json", headers=other_headers
+        )
+        self.assertEqual(second.status_code, 201)
+        # Third ingest from either key on this IP is blocked by the IP cap.
+        third = self.ingest()
+        self.assertEqual(third.status_code, 429)
+        self.assertEqual(third.data["error"]["code"], "TOO_MANY_REQUESTS")
+
 
 class EventTenantIsolationTests(TestCase):
     """Agent.md rule 2: events are invisible across organizations."""

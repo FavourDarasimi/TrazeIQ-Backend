@@ -168,7 +168,13 @@ def drf_exception_handler(exc, context):
     for code, error_code in STATUS_CODE_MAP:
         if status_code == code:
             message = _plain_text(detail) or _ERROR_FALLBACK_MESSAGES[error_code]
-            return api_error(error_code, message, status=status_code)
+            envelope = api_error(error_code, message, status=status_code)
+            # Throttle responses carry a Retry-After header — preserve it so
+            # clients can back off correctly (e.g. ingestion rate limits).
+            retry_after = response.headers.get("Retry-After")
+            if retry_after is not None:
+                envelope.headers["Retry-After"] = retry_after
+            return envelope
 
     # 400 validation errors carry the offending fields for inline UI messages.
     if status_code == http_status.HTTP_400_BAD_REQUEST:

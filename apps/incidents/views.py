@@ -284,8 +284,8 @@ class IncidentCommentView(APIView):
     """POST /api/incidents/{id}/comments/ — append a comment to the timeline.
 
     Developer or above. The entry appears in the timeline immediately with
-    the caller as actor; no realtime event is fired — clients re-read the
-    feed (comments are part of the incident's history, not live state).
+    the caller as actor; an ``incident.updated`` realtime event is pushed so
+    other sessions viewing the incident pick the comment up live (Phase 4F).
     """
 
     permission_classes = [IsAuthenticated, IsIncidentDeveloperOrAbove]
@@ -325,6 +325,7 @@ class IncidentCommentView(APIView):
             content=serializer.validated_data["content"],
             actor=request.user,
         )
+        publish_incident_event(incident, event_name="incident.updated")
         return api_success(
             data={"entry": TimelineEntryOutputSerializer(entry).data},
             status=status.HTTP_201_CREATED,

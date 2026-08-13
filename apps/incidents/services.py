@@ -61,7 +61,8 @@ def add_comment(incident: Incident, *, content: str, actor) -> TimelineEntry:
     """Append a ``comment`` TimelineEntry to the incident's history.
 
     The entry appears in the timeline feed immediately; the caller must
-    already have verified the actor is an organization member (developer+).
+    already have verified the actor is an organization member (developer+)
+    and is expected to push the ``incident.updated`` realtime event.
     """
     return TimelineEntry.objects.create(
         incident=incident,

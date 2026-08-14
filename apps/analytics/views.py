@@ -10,8 +10,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.exceptions import ValidationError
 
+from apps.projects.models import Project
 from trazeiq_backend.responses import api_success, envelope_schema
 
+from .cache import cached_dashboard
 from .selectors import RANGE_BUCKETS, overview_for_user, stats_for_user
 
 VALID_RANGES = set(RANGE_BUCKETS)
@@ -27,6 +29,23 @@ def _project_id(request) -> UUID | None:
         raise ValidationError(
             {"project_id": ["A valid UUID is required."]}
         )
+
+
+def _request_project_scope(request, project_id: UUID | None) -> list[UUID]:
+    """The project ids whose versions belong in the cache key.
+
+    Project-scoped requests cache under that one project; unscoped requests
+    key on every project the caller can see. The selector still enforces
+    membership, so a foreign ``project_id`` resolves to an empty (correct)
+    aggregate and never leaks another tenant's data.
+    """
+    if project_id is not None:
+        return [project_id]
+    return list(
+        Project.objects.filter(
+            organization__memberships__user=request.user
+        ).values_list("id", flat=True)
+    )
 
 
 class DashboardOverviewView(APIView):
@@ -80,7 +99,14 @@ class DashboardOverviewView(APIView):
         },
     )
     def get(self, request):
-        overview = overview_for_user(request.user, project_id=_project_id(request))
+        project_id = _project_id(request)
+        project_ids = _request_project_scope(request, project_id)
+        overview = cached_dashboard(
+            "overview",
+            project_ids,
+            None,
+            lambda: overview_for_user(request.user, project_id=project_id),
+        )
         return api_success({"overview": overview})
 
 
@@ -117,5 +143,14 @@ class DashboardStatsView(APIView):
             raise ValidationError(
                 {"range": [f"Must be one of: {', '.join(sorted(VALID_RANGES))}."]}
             )
-        points = stats_for_user(request.user, project_id=_project_id(request), range_=range_)
+        project_id = _project_id(request)
+        project_ids = _request_project_scope(request, project_id)
+        points = cached_dashboard(
+            "stats",
+            project_ids,
+            range_,
+            lambda: stats_for_user(
+                request.user, project_id=project_id, range_=range_
+            ),
+        )
         return api_success({"stats": {"range": range_, "points": points}})

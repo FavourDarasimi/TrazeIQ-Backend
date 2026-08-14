@@ -327,6 +327,11 @@ CACHES = {
     }
 }
 
+# Phase 5C: dashboard aggregate cache. Per-project version counters (bumped on
+# Event/Incident writes) make this an invalidation layer, not just a TTL; this
+# is the safety-net TTL for the rare write that emits no signal.
+DASHBOARD_CACHE_TTL_SECONDS = env.int("DASHBOARD_CACHE_TTL_SECONDS", default=60)
+
 # ---- Celery (async jobs) ----
 # Redis-backed broker/result backend. The worker process is started with
 # `celery -A trazeiq_backend worker`; docker-compose runs Redis + Django + the

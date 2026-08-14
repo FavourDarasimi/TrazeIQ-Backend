@@ -7,12 +7,15 @@ DoD verification:
 """
 
 from datetime import timedelta
+from unittest.mock import patch
 
+from django.core.cache import cache
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
+from apps.analytics.cache import build_dashboard_key, bump_project_dashboard_version
 from apps.events.services import ingest_event
 from apps.incidents.models import Incident
 from apps.organizations.models import Membership, MembershipRole, Organization
@@ -36,6 +39,9 @@ class DashboardAnalyticsTestCase(TestCase):
         )
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
+        # Phase 5C: caches persist across tests in the shared LocMemCache; clear
+        # so each test starts from a cold, deterministic slate.
+        cache.clear()
 
     def _ingest(self, project, message, level="error"):
         return ingest_event(project, message=message, level=level)
@@ -150,3 +156,70 @@ class DashboardAnalyticsTestCase(TestCase):
         )
         points = res.data["data"]["stats"]["points"]
         self.assertFalse(any(point["events"] for point in points))
+
+    def test_overview_served_from_cache_and_invalidated_on_event(self):
+        # Patch the selector (imported into views) so we can count cold
+        # computes and assert the cached value is what gets returned.
+        cached_shape = {
+            "open_incidents": {
+                "total": 0,
+                "by_severity": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+            },
+            "events_24h": 7,
+            "event_trend": {"percent_change": 0, "trend": "flat"},
+            "resolved_24h": 0,
+            "top_errors": [],
+            "health": "healthy",
+        }
+        with patch(
+            "apps.analytics.views.overview_for_user", return_value=cached_shape
+        ) as mock_overview:
+            res1 = self.client.get("/api/v1/dashboard/overview/")
+            self.assertEqual(res1.status_code, 200)
+            self.assertEqual(res1.data["data"]["overview"]["events_24h"], 7)
+            # Identical repeat within the TTL is served from cache.
+            self.client.get("/api/v1/dashboard/overview/")
+            self.assertEqual(mock_overview.call_count, 1)
+            # A new event bumps the project version -> cache invalidated.
+            self._ingest(self.project, "BrandNewError")
+            self.client.get("/api/v1/dashboard/overview/")
+            self.assertEqual(mock_overview.call_count, 2)
+
+    def test_stats_served_from_cache_and_invalidated_on_event(self):
+        canned_points = [
+            {"ts": "2026-01-01T00:00:00+00:00", "events": 3, "incidents": 1}
+        ]
+        with patch(
+            "apps.analytics.views.stats_for_user", return_value=canned_points
+        ) as mock_stats:
+            res1 = self.client.get("/api/v1/dashboard/stats/?range=24h")
+            self.assertEqual(res1.status_code, 200)
+            self.assertEqual(res1.data["data"]["stats"]["points"], canned_points)
+            # Repeated 24h request hits the cache.
+            self.client.get("/api/v1/dashboard/stats/?range=24h")
+            self.assertEqual(mock_stats.call_count, 1)
+            # A different range is a distinct key -> recomputed.
+            self.client.get("/api/v1/dashboard/stats/?range=7d")
+            self.assertEqual(mock_stats.call_count, 2)
+            # A new event invalidates the 24h key.
+            self._ingest(self.project, "AnotherError")
+            self.client.get("/api/v1/dashboard/stats/?range=24h")
+            self.assertEqual(mock_stats.call_count, 3)
+
+    def test_version_bump_changes_cache_key(self):
+        before = build_dashboard_key("overview", [self.project.id], None)
+        bump_project_dashboard_version(self.project.id)
+        after = build_dashboard_key("overview", [self.project.id], None)
+        self.assertNotEqual(before, after)
+        bump_project_dashboard_version(self.project.id)
+        self.assertNotEqual(
+            after, build_dashboard_key("overview", [self.project.id], None)
+        )
+
+    def test_event_write_invalidates_dashboard_cache_key(self):
+        # The post_save signal on Event must bump the project version so the
+        # next dashboard read recomputes (DoD: fresh within a couple seconds).
+        key_before = build_dashboard_key("overview", [self.project.id], None)
+        self._ingest(self.project, "VersionedError")
+        key_after = build_dashboard_key("overview", [self.project.id], None)
+        self.assertNotEqual(key_before, key_after)

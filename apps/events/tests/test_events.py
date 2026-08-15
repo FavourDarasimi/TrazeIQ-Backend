@@ -353,6 +353,149 @@ class EventListFilterTests(IngestSetupMixin, TestCase):
         self.assertEqual(response.data["error"]["code"], "INVALID_DATE")
 
 
+class EventListSearchAndPaginationTests(IngestSetupMixin, TestCase):
+    """Search + pagination on GET /api/v1/events/ — seeded via ORM so the
+    list behavior is tested without touching the ingestion pipeline."""
+
+    def _seed_event(self, *, message, created_at=None, **overrides):
+        from django.utils import timezone
+
+        from apps.projects.models import Project
+
+        project = Project.objects.get(id=self.project["id"])
+        group, _ = ErrorGroup.objects.get_or_create(
+            project=project,
+            fingerprint=f"fp-{message}",
+            defaults={
+                "title": message,
+                "first_seen": timezone.now(),
+                "last_seen": created_at or timezone.now(),
+            },
+        )
+        defaults = {
+            "project": project,
+            "error_group": group,
+            "message": message,
+            "fingerprint": f"fp-{message}",
+            "level": Event.Level.ERROR,
+            "environment": "production",
+            "service": "payment-api",
+            "created_at": created_at or timezone.now(),
+        }
+        defaults.update(overrides)
+        event = Event.objects.create(**defaults)
+        # auto_now_add overwrites any provided created_at on INSERT, so
+        # back-date through update() (bypasses pre_save) to control ordering.
+        if created_at is not None:
+            Event.objects.filter(id=event.id).update(created_at=created_at)
+        return event
+
+    def _get_page(self, query=""):
+        response = self.client.get(f"/api/v1/events/?{query}")
+        self.assertEqual(response.status_code, 200)
+        return response.data["data"]
+
+    def test_search_matches_message_case_insensitively(self):
+        self._seed_event(message="DatabaseError: connection refused")
+        self._seed_event(message="TimeoutError: upstream timed out")
+        data = self._get_page("search=DATABASEERROR")
+        messages = [e["message"] for e in data["events"]]
+        self.assertEqual(messages, ["DatabaseError: connection refused"])
+
+    def test_search_matches_service_environment_and_endpoint(self):
+        self._seed_event(
+            message="TimeoutError: x", service="checkout-worker", environment="staging"
+        )
+        self._seed_event(
+            message="TimeoutError: y", service="payment-api", endpoint="/v1/pay"
+        )
+        by_service = self._get_page("search=checkout")["events"]
+        self.assertEqual(len(by_service), 1)
+        by_environment = self._get_page("search=staging")["events"]
+        self.assertEqual(len(by_environment), 1)
+        by_endpoint = self._get_page("search=v1%2Fpay")["events"]
+        self.assertEqual(len(by_endpoint), 1)
+
+    def test_search_combines_with_other_filters(self):
+        self._seed_event(
+            message="DatabaseError: refused", level="error", environment="prod"
+        )
+        self._seed_event(
+            message="DatabaseError: refused", level="warning", environment="staging"
+        )
+        data = self._get_page("search=refused&level=warning")
+        self.assertEqual(len(data["events"]), 1)
+        self.assertEqual(data["events"][0]["environment"], "staging")
+
+    def test_pagination_returns_newest_first_with_meta(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        now = timezone.now()
+        self._seed_event(
+            message="first (oldest)", created_at=now - timedelta(minutes=5)
+        )
+        self._seed_event(
+            message="second (middle)", created_at=now - timedelta(minutes=3)
+        )
+        self._seed_event(
+            message="third (newest)", created_at=now - timedelta(minutes=1)
+        )
+        data = self._get_page()
+        self.assertEqual(
+            [e["message"] for e in data["events"]],
+            ["third (newest)", "second (middle)", "first (oldest)"],
+        )
+        self.assertEqual(
+            data["pagination"],
+            {
+                "page": 1,
+                "page_size": 50,
+                "total": 3,
+                "pages": 1,
+                "has_next": False,
+                "has_previous": False,
+            },
+        )
+
+    def test_page_size_slices_and_flags_next_previous(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        now = timezone.now()
+        for i in range(5):
+            self._seed_event(
+                message=f"event {i}", created_at=now - timedelta(minutes=i)
+            )
+        page1 = self._get_page("page=1&page_size=2")
+        self.assertEqual([e["message"] for e in page1["events"]], ["event 0", "event 1"])
+        self.assertEqual(page1["pagination"]["has_next"], True)
+        self.assertEqual(page1["pagination"]["has_previous"], False)
+        self.assertEqual(page1["pagination"]["pages"], 3)
+
+        page3 = self._get_page("page=3&page_size=2")
+        self.assertEqual([e["message"] for e in page3["events"]], ["event 4"])
+        self.assertEqual(page3["pagination"]["has_next"], False)
+        self.assertEqual(page3["pagination"]["has_previous"], True)
+
+    def test_out_of_range_page_returns_empty_events(self):
+        self._seed_event(message="lonely")
+        data = self._get_page("page=99")
+        self.assertEqual(data["events"], [])
+        self.assertEqual(data["pagination"]["total"], 1)
+        self.assertEqual(data["pagination"]["has_next"], False)
+
+    def test_invalid_page_and_page_size_are_400(self):
+        for query in ("page=abc", "page=0", "page=-2", "page_size=0", "page_size=101"):
+            response = self.client.get(f"/api/v1/events/?{query}")
+            self.assertEqual(response.status_code, 400, query)
+            self.assertEqual(
+                response.data["error"]["code"], "VALIDATION_FAILED", query
+            )
+
+
 class FingerprintUtilsTests(TestCase):
     def test_fingerprint_is_deterministic_and_low_entropy(self):
         f1 = fingerprint(

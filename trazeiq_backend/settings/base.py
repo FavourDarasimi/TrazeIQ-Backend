@@ -332,6 +332,27 @@ CACHES = {
 # is the safety-net TTL for the rare write that emits no signal.
 DASHBOARD_CACHE_TTL_SECONDS = env.int("DASHBOARD_CACHE_TTL_SECONDS", default=60)
 
+# Console logging so the dashboard-cache HIT/MISS lines (with the ms saved by
+# the cache) actually surface in the server log instead of being dropped.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "console": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"}
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "console"}
+    },
+    "root": {"handlers": ["console"], "level": "WARNING"},
+    "loggers": {
+        "apps.analytics.cache": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        }
+    },
+}
+
 # ---- Celery (async jobs) ----
 # Redis-backed broker/result backend. The worker process is started with
 # `celery -A trazeiq_backend worker`; docker-compose runs Redis + Django + the

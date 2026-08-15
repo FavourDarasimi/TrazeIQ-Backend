@@ -4,6 +4,8 @@ from rest_framework.exceptions import NotFound
 from rest_framework.views import APIView
 from uuid import UUID
 
+import math
+
 from trazeiq_backend.responses import api_success, api_error, envelope_schema
 
 from .authentication import APIKeyAuthentication
@@ -14,6 +16,31 @@ from .services import ingest_event
 from .throttles import EventPerKeyRateThrottle, EventPerIpRateThrottle
 
 EVENT_NOT_FOUND = "This event does not exist."
+
+DEFAULT_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 100
+
+
+def _parse_pagination(query) -> tuple[int, int]:
+    """Parse ``page``/``page_size``, raising DRF validation on bad values."""
+    errors: dict[str, str] = {}
+    try:
+        page = int(query.get("page", "1"))
+        if page < 1:
+            errors["page"] = "Must be a positive integer."
+    except (TypeError, ValueError):
+        errors["page"] = "Must be a positive integer."
+    try:
+        page_size = int(query.get("page_size", str(DEFAULT_PAGE_SIZE)))
+        if not 1 <= page_size <= MAX_PAGE_SIZE:
+            errors["page_size"] = (
+                f"Must be an integer between 1 and {MAX_PAGE_SIZE}."
+            )
+    except (TypeError, ValueError):
+        errors["page_size"] = f"Must be an integer between 1 and {MAX_PAGE_SIZE}."
+    if errors:
+        raise serializers.ValidationError(errors)
+    return page, page_size
 
 
 def _event_schema(name: str):
@@ -89,8 +116,10 @@ class EventIngestAndListView(APIView):
         operation_id="events_list",
         summary="List events",
         description=(
-            "Events from every project in the caller's organizations. "
-            "Filter by level, environment, service or ISO date."
+            "Events from every project in the caller's organizations, "
+            "newest first. Filter by level, environment, service, ISO date "
+            "or a free-text search (message, fingerprint, service, "
+            "environment, endpoint), and paginate with page / page_size."
         ),
         parameters=[
             inline_serializer(
@@ -100,6 +129,9 @@ class EventIngestAndListView(APIView):
                     "environment": serializers.CharField(required=False),
                     "service": serializers.CharField(required=False),
                     "date": serializers.DateField(required=False),
+                    "search": serializers.CharField(required=False),
+                    "page": serializers.IntegerField(required=False),
+                    "page_size": serializers.IntegerField(required=False),
                 },
             )
         ],
@@ -108,7 +140,20 @@ class EventIngestAndListView(APIView):
                 "EventListOk",
                 payload=inline_serializer(
                     "EventListData",
-                    fields={"events": EventOutputSerializer(many=True)},
+                    fields={
+                        "events": EventOutputSerializer(many=True),
+                        "pagination": inline_serializer(
+                            "EventListPagination",
+                            fields={
+                                "page": serializers.IntegerField(),
+                                "page_size": serializers.IntegerField(),
+                                "total": serializers.IntegerField(),
+                                "pages": serializers.IntegerField(),
+                                "has_next": serializers.BooleanField(),
+                                "has_previous": serializers.BooleanField(),
+                            },
+                        ),
+                    },
                 ),
             ),
             400: envelope_schema("EventListValidation", error=True),
@@ -116,27 +161,43 @@ class EventIngestAndListView(APIView):
         },
     )
     def get(self, request):
+        query = request.query_params
         try:
             date_filter = (
-                parse_date_filter(request.query_params["date"])
-                if request.query_params.get("date")
-                else None
+                parse_date_filter(query["date"]) if query.get("date") else None
             )
         except ValueError:
             return api_error(
                 "INVALID_DATE", "date must be YYYY-MM-DD.",
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        page, page_size = _parse_pagination(query)
 
         events = list_events_for_user(
             request.user,
-            level=request.query_params.get("level"),
-            environment=request.query_params.get("environment"),
-            service=request.query_params.get("service"),
+            level=query.get("level"),
+            environment=query.get("environment"),
+            service=query.get("service"),
             date=date_filter,
+            search=query.get("search"),
         )
-        serializer = EventOutputSerializer(events, many=True)
-        return api_success({"events": serializer.data})
+        total = events.count()
+        start = (page - 1) * page_size
+        page_events = events[start : start + page_size]
+        serializer = EventOutputSerializer(page_events, many=True)
+        return api_success(
+            {
+                "events": serializer.data,
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total": total,
+                    "pages": math.ceil(total / page_size),
+                    "has_next": start + page_size < total,
+                    "has_previous": page > 1,
+                },
+            }
+        )
 
 
 class EventDetailView(APIView):

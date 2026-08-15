@@ -1,6 +1,8 @@
 import datetime
 from uuid import UUID
 
+from django.db.models import Q
+
 from .models import Event
 
 
@@ -19,6 +21,7 @@ def list_events_for_user(
     environment=None,
     service=None,
     date=None,
+    search=None,
 ):
     qs = _events_for_user(user)
     if level:
@@ -29,7 +32,19 @@ def list_events_for_user(
         qs = qs.filter(service__icontains=service)
     if date:
         qs = qs.filter(created_at__date=date)
-    return qs.select_related("project", "error_group")
+    if search:
+        qs = qs.filter(
+            Q(message__icontains=search)
+            | Q(fingerprint__icontains=search)
+            | Q(service__icontains=search)
+            | Q(environment__icontains=search)
+            | Q(endpoint__icontains=search)
+        )
+    # Newest first — the log-stream convention; the tiebreaker keeps the
+    # order deterministic for pagination.
+    return qs.select_related("project", "error_group").order_by(
+        "-created_at", "-id"
+    )
 
 
 def get_event_for_user(event_id: UUID, user):

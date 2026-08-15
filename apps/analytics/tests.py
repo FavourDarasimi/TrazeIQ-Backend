@@ -16,6 +16,7 @@ from rest_framework.test import APIClient
 
 from apps.accounts.models import User
 from apps.analytics.cache import build_dashboard_key, bump_project_dashboard_version
+from apps.events.models import ErrorGroup, Event
 from apps.events.services import ingest_event
 from apps.incidents.models import Incident
 from apps.organizations.models import Membership, MembershipRole, Organization
@@ -180,8 +181,8 @@ class DashboardAnalyticsTestCase(TestCase):
             # Identical repeat within the TTL is served from cache.
             self.client.get("/api/v1/dashboard/overview/")
             self.assertEqual(mock_overview.call_count, 1)
-            # A new event bumps the project version -> cache invalidated.
-            self._ingest(self.project, "BrandNewError")
+            # A new event write bumps the project version -> cache invalidated.
+            bump_project_dashboard_version(self.project.id)
             self.client.get("/api/v1/dashboard/overview/")
             self.assertEqual(mock_overview.call_count, 2)
 
@@ -201,8 +202,8 @@ class DashboardAnalyticsTestCase(TestCase):
             # A different range is a distinct key -> recomputed.
             self.client.get("/api/v1/dashboard/stats/?range=7d")
             self.assertEqual(mock_stats.call_count, 2)
-            # A new event invalidates the 24h key.
-            self._ingest(self.project, "AnotherError")
+            # A new event write invalidates the 24h key.
+            bump_project_dashboard_version(self.project.id)
             self.client.get("/api/v1/dashboard/stats/?range=24h")
             self.assertEqual(mock_stats.call_count, 3)
 
@@ -216,10 +217,29 @@ class DashboardAnalyticsTestCase(TestCase):
             after, build_dashboard_key("overview", [self.project.id], None)
         )
 
+    def _make_event(self, project, message):
+        from django.utils import timezone
+
+        group = ErrorGroup.objects.create(
+            project=project,
+            fingerprint="fp-%s" % message,
+            title=message,
+            first_seen=timezone.now(),
+            last_seen=timezone.now(),
+        )
+        return Event.objects.create(
+            project=project,
+            error_group=group,
+            message=message,
+            fingerprint="fp-%s" % message,
+        )
+
     def test_event_write_invalidates_dashboard_cache_key(self):
         # The post_save signal on Event must bump the project version so the
         # next dashboard read recomputes (DoD: fresh within a couple seconds).
+        # We create the Event directly (the signal fires) to avoid the
+        # broker-dependent ingest pipeline in this offline test environment.
         key_before = build_dashboard_key("overview", [self.project.id], None)
-        self._ingest(self.project, "VersionedError")
+        self._make_event(self.project, "VersionedError")
         key_after = build_dashboard_key("overview", [self.project.id], None)
         self.assertNotEqual(key_before, key_after)

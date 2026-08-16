@@ -75,6 +75,12 @@ def ingest_event(
         defaults={"severity": severity_from_level(level)},
     )
 
+    if _created:
+        from apps.notifications.services import notify_incident_created
+
+        # Best-effort inbox fan-out to the org — never fails ingestion.
+        notify_incident_created(incident)
+
     event = Event.objects.create(
         project=project,
         error_group=group,

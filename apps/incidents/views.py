@@ -382,6 +382,10 @@ class IncidentResolveView(APIView):
                 action=AuditAction.INCIDENT_RESOLVED,
                 target=f"Resolved incident '{incident.error_group.title}'",
             )
+            # Best-effort inbox fan-out — never fails the resolve action.
+            from apps.notifications.services import notify_incident_resolved
+
+            notify_incident_resolved(incident, actor_id=request.user.pk)
 
         events = latest_events_by_id([incident])
         return api_success(

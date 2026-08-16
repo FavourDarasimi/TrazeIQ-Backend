@@ -27,6 +27,8 @@ def update_incident(
     kept consistent with the status.
     """
     changes = []
+    assignment_changed = False
+    state_changed = False
 
     if status is not _UNSET and status != incident.status:
         incident.status = status
@@ -35,14 +37,17 @@ def update_incident(
         elif status != Incident.Status.RESOLVED:
             incident.resolved_at = None
         changes.append(f"status → {status}")
+        state_changed = True
 
     if severity is not _UNSET and severity != incident.severity:
         incident.severity = severity
         changes.append(f"severity → {severity}")
+        state_changed = True
 
     if assigned_to is not _UNSET and assigned_to != incident.assigned_to:
         incident.assigned_to = assigned_to
         changes.append(f"assigned_to → {assigned_to.email if assigned_to else 'unassigned'}")
+        assignment_changed = True
 
     if not changes:
         return incident
@@ -54,6 +59,19 @@ def update_incident(
         content=", ".join(changes)[:1000],
         actor=actor,
     )
+
+    # Best-effort inbox fan-out — never fails the update request.
+    from apps.notifications.services import (
+        notify_incident_assigned,
+        notify_incident_updated,
+    )
+
+    if assignment_changed and incident.assigned_to is not None:
+        notify_incident_assigned(incident)
+    if state_changed:
+        notify_incident_updated(
+            incident, actor_id=actor.pk if actor else None, changes=changes
+        )
     return incident
 
 
@@ -64,9 +82,17 @@ def add_comment(incident: Incident, *, content: str, actor) -> TimelineEntry:
     already have verified the actor is an organization member (developer+)
     and is expected to push the ``incident.updated`` realtime event.
     """
-    return TimelineEntry.objects.create(
+    entry = TimelineEntry.objects.create(
         incident=incident,
         kind=TimelineEntry.Kind.COMMENT,
         content=content.strip(),
         actor=actor,
     )
+
+    # Best-effort inbox fan-out — never fails the comment request.
+    from apps.notifications.services import notify_incident_commented
+
+    notify_incident_commented(
+        incident, actor_id=actor.pk if actor else None, content=content.strip()
+    )
+    return entry

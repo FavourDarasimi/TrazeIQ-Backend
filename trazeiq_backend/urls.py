@@ -25,6 +25,7 @@ urlpatterns = [
     path("api/v1/integrations/", include("apps.integrations.urls")),
     path("api/v1/pusher/", include("apps.realtime.urls")),
     path("api/v1/dashboard/", include("apps.analytics.urls")),
+    path("api/v1/services/", include("apps.analytics.services_urls")),
     path("api/v1/audit-logs/", include("apps.auditlog.urls")),
     path("api/v1/notifications/", include("apps.notifications.urls")),
     # Unversioned alias for the health probe

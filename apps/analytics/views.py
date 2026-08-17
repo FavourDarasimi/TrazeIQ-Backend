@@ -14,7 +14,12 @@ from apps.projects.models import Project
 from trazeiq_backend.responses import api_success, envelope_schema
 
 from .cache import cached_dashboard
-from .selectors import RANGE_BUCKETS, overview_for_user, stats_for_user
+from .selectors import (
+    RANGE_BUCKETS,
+    overview_for_user,
+    services_health_for_user,
+    stats_for_user,
+)
 
 VALID_RANGES = set(RANGE_BUCKETS)
 
@@ -154,3 +159,79 @@ class DashboardStatsView(APIView):
             ),
         )
         return api_success({"stats": {"range": range_, "points": points}})
+
+
+class ServicesHealthView(APIView):
+    """GET /api/services/health/ — per-service error catalog for the caller's
+    projects (optionally narrowed to one project), over a rolling window."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["services"],
+        operation_id="services_health",
+        summary="Services health catalog",
+        description=(
+            "Per-service aggregates over the last 24h/7d/30d: event and "
+            "error volume, error rate, uptime share of active hourly buckets "
+            "without fatal events, distinct error groups, last-seen time and "
+            "an environment breakdown. Status is derived per service: "
+            "``critical`` when a fatal event landed in the window, "
+            "``degraded`` when any error event did, else ``healthy``. "
+            "Events without a service string are excluded. Optional "
+            "``project_id`` narrows everything to one project."
+        ),
+        responses={
+            200: envelope_schema(
+                "ServicesHealthOk",
+                payload={
+                    "catalog": {
+                        "range": "24h",
+                        "summary": {
+                            "total_services": 0,
+                            "events": 0,
+                            "critical_services": 0,
+                            "avg_error_rate": 0.0,
+                        },
+                        "services": [
+                            {
+                                "name": "payment-api",
+                                "status": "healthy",
+                                "events": 0,
+                                "error_events": 0,
+                                "error_rate": 0.0,
+                                "fatal_events": 0,
+                                "error_groups": 0,
+                                "uptime": 100,
+                                "last_seen": "2026-01-01T00:00:00+00:00",
+                                "environments": [
+                                    {
+                                        "name": "production",
+                                        "events": 0,
+                                        "error_events": 0,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                },
+            )
+        },
+    )
+    def get(self, request):
+        range_ = request.query_params.get("range") or "24h"
+        if range_ not in VALID_RANGES:
+            raise ValidationError(
+                {"range": [f"Must be one of: {', '.join(sorted(VALID_RANGES))}."]}
+            )
+        project_id = _project_id(request)
+        project_ids = _request_project_scope(request, project_id)
+        catalog = cached_dashboard(
+            "services",
+            project_ids,
+            range_,
+            lambda: services_health_for_user(
+                request.user, project_id=project_id, range_=range_
+            ),
+        )
+        return api_success({"catalog": catalog})

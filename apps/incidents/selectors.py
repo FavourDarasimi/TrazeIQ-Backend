@@ -67,6 +67,35 @@ def get_incident_for_user(incident_id: UUID, user):
     )
 
 
+def get_incidents_for_user(incident_ids: list[UUID], user) -> QuerySet[Incident]:
+    """Multiple incidents the user can access, scoped by org membership.
+    Returns only the subset of requested IDs that exist and are accessible."""
+    return (
+        _with_latest_event(_incidents_for_user(user))
+        .filter(id__in=incident_ids)
+    )
+
+
+def get_updatable_incidents_for_user(incident_ids: list[UUID], user) -> QuerySet[Incident]:
+    """Multiple incidents the user has developer+ role to modify."""
+    from apps.organizations.models import MembershipRole
+
+    allowed_roles = [
+        MembershipRole.DEVELOPER,
+        MembershipRole.ADMIN,
+        MembershipRole.OWNER,
+    ]
+    return (
+        Incident.objects.filter(
+            id__in=incident_ids,
+            project__organization__memberships__user=user,
+            project__organization__memberships__role__in=allowed_roles,
+        )
+        .distinct()
+        .select_related("project", "project__organization", "error_group")
+    )
+
+
 def latest_events_by_id(incidents) -> dict[UUID, Event]:
     """Resolve the annotated ``latest_event_id``s into Event rows, keyed by
     event id. Call after fetching incidents; ``incident.latest_event_id``

@@ -9,6 +9,7 @@ class AuditAction(models.TextChoices):
     KEY_ROTATED = "key_rotated", "API key rotated"
     MEMBER_REMOVED = "member_removed", "Member removed"
     INCIDENT_RESOLVED = "incident_resolved", "Incident resolved"
+    INCIDENTS_BULK_UPDATED = "incidents_bulk_updated", "Incidents bulk updated"
 
 
 class AuditLog(UUIDModel):

@@ -26,3 +26,15 @@ class IsIncidentDeveloperOrAbove(IncidentRolePermission):
     re-trigger AI analysis. Viewers are read-only."""
 
     minimum_role = MembershipRole.DEVELOPER
+
+
+class IsBulkIncidentDeveloperOrAbove(OrgRolePermission):
+    """Bulk incident workflow operations."""
+
+    minimum_role = MembershipRole.DEVELOPER
+
+    def has_permission(self, request, view):
+        user = getattr(request, "user", None)
+        if user is None or not user.is_authenticated:
+            return False
+        return True

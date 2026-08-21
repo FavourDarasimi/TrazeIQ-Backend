@@ -20,20 +20,22 @@ from apps.realtime.services import publish_incident_event
 from trazeiq_backend.responses import api_success, envelope_schema
 
 from .models import Incident, TimelineEntry
-from .permissions import IsIncidentDeveloperOrAbove
+from .permissions import IsBulkIncidentDeveloperOrAbove, IsIncidentDeveloperOrAbove
 from .selectors import (
     get_incident_for_user,
+    get_updatable_incidents_for_user,
     latest_events_by_id,
     list_incident_timeline,
     list_incidents_for_user,
 )
 from .serializers import (
+    BulkUpdateSerializer,
     CommentInputSerializer,
     IncidentOutputSerializer,
     IncidentUpdateSerializer,
     TimelineEntryOutputSerializer,
 )
-from .services import add_comment, update_incident
+from .services import add_comment, bulk_update_incidents, update_incident
 
 INCIDENT_NOT_FOUND = "This incident does not exist."
 
@@ -397,7 +399,275 @@ class IncidentResolveView(APIView):
         )
 
 
+class IncidentBulkUpdateView(APIView):
+    """POST /api/v1/incidents/bulk-update/ — apply status/severity/assignment
+    updates to multiple incidents at once."""
+
+    permission_classes = [IsAuthenticated, IsBulkIncidentDeveloperOrAbove]
+
+    @extend_schema(
+        tags=["incidents"],
+        operation_id="incidents_bulk_update",
+        summary="Bulk update incidents",
+        request=BulkUpdateSerializer,
+        responses={
+            200: envelope_schema(
+                "IncidentBulkUpdateOk",
+                payload=inline_serializer(
+                    "IncidentBulkUpdateData",
+                    fields={
+                        "updated_count": serializers.IntegerField(),
+                        "incidents": IncidentOutputSerializer(many=True),
+                    },
+                ),
+            ),
+            400: envelope_schema("IncidentBulkUpdateValidation", error=True),
+            401: envelope_schema("IncidentBulkUpdateUnauthorized", error=True),
+            403: envelope_schema("IncidentBulkUpdateForbidden", error=True),
+        },
+    )
+    def post(self, request):
+        raw_ids = request.data.get("incident_ids", [])
+        if not isinstance(raw_ids, list) or not raw_ids:
+            raise serializers.ValidationError(
+                {"incident_ids": "A non-empty list of UUIDs is required."}
+            )
+
+        valid_uuids = []
+        for item in raw_ids:
+            try:
+                valid_uuids.append(UUID(str(item)))
+            except (TypeError, ValueError, AttributeError):
+                raise serializers.ValidationError(
+                    {"incident_ids": f"Invalid UUID: {item}"}
+                )
+
+        incidents = list(get_updatable_incidents_for_user(valid_uuids, request.user))
+        if not incidents:
+            return api_success(
+                data={"updated_count": 0, "incidents": []},
+                message="No updatable incidents found.",
+            )
+
+        org_ids = {inc.project.organization_id for inc in incidents}
+        serializer = BulkUpdateSerializer(
+            data=request.data,
+            context={"organization_ids": org_ids},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        updates = {
+            key: serializer.validated_data[key]
+            for key in ("status", "severity", "assigned_to")
+            if key in serializer.validated_data
+        }
+
+        updated = bulk_update_incidents(
+            incidents, actor=request.user, **updates
+        )
+
+        for incident in updated:
+            publish_incident_event(incident, event_name="incident.updated")
+            enqueue_alert_evaluation(incident.pk)
+
+        if updated:
+            first_org = updated[0].project.organization
+            change_summary = ", ".join(f"{k}={v}" for k, v in updates.items())
+            record_audit_log(
+                actor=request.user,
+                organization=first_org,
+                action=AuditAction.INCIDENTS_BULK_UPDATED,
+                target=f"Bulk updated {len(updated)} incident(s): {change_summary}",
+            )
+
+        events = latest_events_by_id(updated)
+        return api_success(
+            data={
+                "updated_count": len(updated),
+                "incidents": IncidentOutputSerializer(
+                    updated, many=True, context={"events": events}
+                ).data,
+            }
+        )
+
+
+class IncidentBulkResolveView(APIView):
+    """POST /api/v1/incidents/bulk-resolve/ — mark multiple incidents resolved."""
+
+    permission_classes = [IsAuthenticated, IsBulkIncidentDeveloperOrAbove]
+
+    @extend_schema(
+        tags=["incidents"],
+        operation_id="incidents_bulk_resolve",
+        summary="Bulk resolve incidents",
+        request=inline_serializer(
+            "BulkResolveRequest",
+            fields={"incident_ids": serializers.ListField(child=serializers.UUIDField())},
+        ),
+        responses={
+            200: envelope_schema(
+                "IncidentBulkResolveOk",
+                payload=inline_serializer(
+                    "IncidentBulkResolveData",
+                    fields={
+                        "updated_count": serializers.IntegerField(),
+                        "incidents": IncidentOutputSerializer(many=True),
+                    },
+                ),
+            ),
+            400: envelope_schema("IncidentBulkResolveValidation", error=True),
+            401: envelope_schema("IncidentBulkResolveUnauthorized", error=True),
+            403: envelope_schema("IncidentBulkResolveForbidden", error=True),
+        },
+    )
+    def post(self, request):
+        raw_ids = request.data.get("incident_ids", [])
+        if not isinstance(raw_ids, list) or not raw_ids:
+            raise serializers.ValidationError(
+                {"incident_ids": "A non-empty list of UUIDs is required."}
+            )
+
+        valid_uuids = []
+        for item in raw_ids:
+            try:
+                valid_uuids.append(UUID(str(item)))
+            except (TypeError, ValueError, AttributeError):
+                raise serializers.ValidationError(
+                    {"incident_ids": f"Invalid UUID: {item}"}
+                )
+
+        incidents = list(get_updatable_incidents_for_user(valid_uuids, request.user))
+        if not incidents:
+            return api_success(
+                data={"updated_count": 0, "incidents": []},
+                message="No updatable incidents found.",
+            )
+
+        updated = bulk_update_incidents(
+            incidents, actor=request.user, status=Incident.Status.RESOLVED
+        )
+
+        for incident in updated:
+            publish_incident_event(incident, event_name="incident.resolved")
+            enqueue_alert_evaluation(incident.pk)
+
+        if updated:
+            first_org = updated[0].project.organization
+            record_audit_log(
+                actor=request.user,
+                organization=first_org,
+                action=AuditAction.INCIDENTS_BULK_UPDATED,
+                target=f"Bulk resolved {len(updated)} incident(s)",
+            )
+
+        events = latest_events_by_id(updated)
+        return api_success(
+            data={
+                "updated_count": len(updated),
+                "incidents": IncidentOutputSerializer(
+                    updated, many=True, context={"events": events}
+                ).data,
+            }
+        )
+
+
+class IncidentBulkAssignView(APIView):
+    """POST /api/v1/incidents/bulk-assign/ — assign multiple incidents to a member or unassign."""
+
+    permission_classes = [IsAuthenticated, IsBulkIncidentDeveloperOrAbove]
+
+    @extend_schema(
+        tags=["incidents"],
+        operation_id="incidents_bulk_assign",
+        summary="Bulk assign incidents",
+        request=inline_serializer(
+            "BulkAssignRequest",
+            fields={
+                "incident_ids": serializers.ListField(child=serializers.UUIDField()),
+                "assigned_to": serializers.UUIDField(allow_null=True, required=False),
+            },
+        ),
+        responses={
+            200: envelope_schema(
+                "IncidentBulkAssignOk",
+                payload=inline_serializer(
+                    "IncidentBulkAssignData",
+                    fields={
+                        "updated_count": serializers.IntegerField(),
+                        "incidents": IncidentOutputSerializer(many=True),
+                    },
+                ),
+            ),
+            400: envelope_schema("IncidentBulkAssignValidation", error=True),
+            401: envelope_schema("IncidentBulkAssignUnauthorized", error=True),
+            403: envelope_schema("IncidentBulkAssignForbidden", error=True),
+        },
+    )
+    def post(self, request):
+        raw_ids = request.data.get("incident_ids", [])
+        if not isinstance(raw_ids, list) or not raw_ids:
+            raise serializers.ValidationError(
+                {"incident_ids": "A non-empty list of UUIDs is required."}
+            )
+
+        valid_uuids = []
+        for item in raw_ids:
+            try:
+                valid_uuids.append(UUID(str(item)))
+            except (TypeError, ValueError, AttributeError):
+                raise serializers.ValidationError(
+                    {"incident_ids": f"Invalid UUID: {item}"}
+                )
+
+        incidents = list(get_updatable_incidents_for_user(valid_uuids, request.user))
+        if not incidents:
+            return api_success(
+                data={"updated_count": 0, "incidents": []},
+                message="No updatable incidents found.",
+            )
+
+        org_ids = {inc.project.organization_id for inc in incidents}
+        serializer = BulkUpdateSerializer(
+            data={"incident_ids": raw_ids, "assigned_to": request.data.get("assigned_to")},
+            context={"organization_ids": org_ids},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        updated = bulk_update_incidents(
+            incidents,
+            actor=request.user,
+            assigned_to=serializer.validated_data.get("assigned_to"),
+        )
+
+        for incident in updated:
+            publish_incident_event(incident, event_name="incident.updated")
+            enqueue_alert_evaluation(incident.pk)
+
+        if updated:
+            first_org = updated[0].project.organization
+            assignee = serializer.validated_data.get("assigned_to")
+            record_audit_log(
+                actor=request.user,
+                organization=first_org,
+                action=AuditAction.INCIDENTS_BULK_UPDATED,
+                target=f"Bulk assigned {len(updated)} incident(s) to {assignee.email if assignee else 'unassigned'}",
+            )
+
+        events = latest_events_by_id(updated)
+        return api_success(
+            data={
+                "updated_count": len(updated),
+                "incidents": IncidentOutputSerializer(
+                    updated, many=True, context={"events": events}
+                ).data,
+            }
+        )
+
+
 __all__ = [
+    "IncidentBulkAssignView",
+    "IncidentBulkResolveView",
+    "IncidentBulkUpdateView",
     "IncidentCommentView",
     "IncidentDetailView",
     "IncidentListView",

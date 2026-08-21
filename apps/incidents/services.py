@@ -96,3 +96,29 @@ def add_comment(incident: Incident, *, content: str, actor) -> TimelineEntry:
         incident, actor_id=actor.pk if actor else None, content=content.strip()
     )
     return entry
+
+
+def bulk_update_incidents(
+    incidents: list[Incident],
+    *,
+    actor,
+    status=_UNSET,
+    severity=_UNSET,
+    assigned_to=_UNSET,
+) -> list[Incident]:
+    """Apply the same workflow changes to multiple incidents in one pass.
+
+    Delegates per-incident logic to ``update_incident`` so timeline entries,
+    notifications, and resolved_at bookkeeping stay consistent.
+    """
+    updated = []
+    for incident in incidents:
+        res = update_incident(
+            incident,
+            actor=actor,
+            status=status,
+            severity=severity,
+            assigned_to=assigned_to,
+        )
+        updated.append(res)
+    return updated

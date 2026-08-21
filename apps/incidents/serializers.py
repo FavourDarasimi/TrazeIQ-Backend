@@ -160,3 +160,52 @@ class CommentInputSerializer(serializers.Serializer):
         trim_whitespace=True,
         max_length=5000,
     )
+
+
+class BulkUpdateSerializer(serializers.Serializer):
+    """POST /api/v1/incidents/bulk-update/ — apply the same status/severity/assignment
+    change to multiple incidents at once.
+
+    ``incident_ids`` accepts 1–100 UUIDs. At least one update field (status,
+    severity, or assigned_to) must be provided.
+    """
+
+    incident_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        min_length=1,
+        max_length=100,
+    )
+    status = serializers.ChoiceField(
+        choices=Incident.Status.choices, required=False
+    )
+    severity = serializers.ChoiceField(
+        choices=Incident.Severity.choices, required=False
+    )
+    assigned_to = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.none(),
+        required=False,
+        allow_null=True,
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        organization_ids = self.context.get("organization_ids")
+        organization_id = self.context.get("organization_id")
+        if organization_ids:
+            self.fields["assigned_to"].queryset = User.objects.filter(
+                memberships__organization_id__in=organization_ids
+            ).distinct()
+        elif organization_id is not None:
+            self.fields["assigned_to"].queryset = User.objects.filter(
+                memberships__organization_id=organization_id
+            ).distinct()
+
+    def validate(self, attrs):
+        has_update = any(
+            key in attrs for key in ("status", "severity", "assigned_to")
+        )
+        if not has_update:
+            raise serializers.ValidationError(
+                "At least one of status, severity, or assigned_to is required."
+            )
+        return attrs

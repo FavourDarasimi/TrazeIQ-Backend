@@ -3,6 +3,9 @@ from django.urls import path
 from apps.ai.views import IncidentAnalysisView, IncidentAnalyzeView
 
 from .views import (
+    IncidentBulkAssignView,
+    IncidentBulkResolveView,
+    IncidentBulkUpdateView,
     IncidentCommentView,
     IncidentDetailView,
     IncidentListView,
@@ -12,6 +15,21 @@ from .views import (
 
 urlpatterns = [
     path("", IncidentListView.as_view(), name="incident-list"),
+    path(
+        "bulk-update/",
+        IncidentBulkUpdateView.as_view(),
+        name="incident-bulk-update",
+    ),
+    path(
+        "bulk-resolve/",
+        IncidentBulkResolveView.as_view(),
+        name="incident-bulk-resolve",
+    ),
+    path(
+        "bulk-assign/",
+        IncidentBulkAssignView.as_view(),
+        name="incident-bulk-assign",
+    ),
     path(
         "<uuid:incident_id>/",
         IncidentDetailView.as_view(),

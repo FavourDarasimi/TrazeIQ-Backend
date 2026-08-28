@@ -36,6 +36,18 @@ def _project_id(request) -> UUID | None:
         )
 
 
+def _require_project_id(request) -> UUID:
+    """Require project_id for dashboard/services endpoints.
+
+    Returns the UUID or raises 400 with a guidance error instead of silently
+    returning an empty aggregated 0 that looks like data loss (Issue #4).
+    """
+    pid = _project_id(request)
+    if pid is None:
+        raise ValidationError({"project_id": ["This field is required."]})
+    return pid
+
+
 def _request_project_scope(request, project_id: UUID | None) -> list[UUID]:
     """The project ids whose versions belong in the cache key.
 
@@ -54,8 +66,7 @@ def _request_project_scope(request, project_id: UUID | None) -> list[UUID]:
 
 
 class DashboardOverviewView(APIView):
-    """GET /api/dashboard/overview/ — current health snapshot for the user's
-    projects (optionally narrowed to one project)."""
+    """GET /api/dashboard/overview/ — current health snapshot for one project."""
 
     permission_classes = [IsAuthenticated]
 
@@ -66,9 +77,9 @@ class DashboardOverviewView(APIView):
         description=(
             "Open incident counts by severity, 24h event volume with trend, "
             "resolved-in-24h count, top recurring errors (last 7 days of "
-            "activity) and a derived system-health level. Optional "
-            "``project_id`` narrows every stat to one project; without it, "
-            "everything aggregates across the caller's organizations."
+            "activity) and a derived system-health level. ``project_id`` is "
+            "required — without it the API returns 400 with guidance instead "
+            "of a silent 0 that looks like data loss (Issue #4)."
         ),
         responses={
             200: envelope_schema(
@@ -104,7 +115,7 @@ class DashboardOverviewView(APIView):
         },
     )
     def get(self, request):
-        project_id = _project_id(request)
+        project_id = _require_project_id(request)
         project_ids = _request_project_scope(request, project_id)
         overview = cached_dashboard(
             "overview",
@@ -116,7 +127,7 @@ class DashboardOverviewView(APIView):
 
 
 class DashboardStatsView(APIView):
-    """GET /api/dashboard/stats/?range=24h|7d|30d — bucketed time-series."""
+    """GET /api/dashboard/stats/?range=24h|7d|30d — bucketed time-series for one project."""
 
     permission_classes = [IsAuthenticated]
 
@@ -126,7 +137,8 @@ class DashboardStatsView(APIView):
         summary="Dashboard time-series",
         description=(
             "Event and incident counts bucketed per hour (24h) or per day "
-            "(7d/30d), zero-filled so the chart has no gaps."
+            "(7d/30d), zero-filled so the chart has no gaps. ``project_id`` "
+            "is required."
         ),
         responses={
             200: envelope_schema(
@@ -148,7 +160,7 @@ class DashboardStatsView(APIView):
             raise ValidationError(
                 {"range": [f"Must be one of: {', '.join(sorted(VALID_RANGES))}."]}
             )
-        project_id = _project_id(request)
+        project_id = _require_project_id(request)
         project_ids = _request_project_scope(request, project_id)
         points = cached_dashboard(
             "stats",
@@ -162,8 +174,7 @@ class DashboardStatsView(APIView):
 
 
 class ServicesHealthView(APIView):
-    """GET /api/services/health/ — per-service error catalog for the caller's
-    projects (optionally narrowed to one project), over a rolling window."""
+    """GET /api/services/health/ — per-service error catalog for one project, over a rolling window."""
 
     permission_classes = [IsAuthenticated]
 
@@ -178,8 +189,8 @@ class ServicesHealthView(APIView):
             "an environment breakdown. Status is derived per service: "
             "``critical`` when a fatal event landed in the window, "
             "``degraded`` when any error event did, else ``healthy``. "
-            "Events without a service string are excluded. Optional "
-            "``project_id`` narrows everything to one project."
+            "Events without a service string are excluded. ``project_id`` is "
+            "required."
         ),
         responses={
             200: envelope_schema(
@@ -224,7 +235,7 @@ class ServicesHealthView(APIView):
             raise ValidationError(
                 {"range": [f"Must be one of: {', '.join(sorted(VALID_RANGES))}."]}
             )
-        project_id = _project_id(request)
+        project_id = _require_project_id(request)
         project_ids = _request_project_scope(request, project_id)
         catalog = cached_dashboard(
             "services",

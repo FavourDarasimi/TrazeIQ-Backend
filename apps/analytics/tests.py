@@ -55,6 +55,12 @@ class DashboardAnalyticsTestCase(TestCase):
         incident.save()
         return incident
 
+    def test_overview_requires_project_id(self):
+        res = self.client.get("/api/v1/dashboard/overview/")
+        self.assertEqual(res.status_code, 400)
+        self.assertFalse(res.data["success"])
+        self.assertIn("project_id", res.data["error"]["fields"])
+
     def test_overview_reports_counts_breakdown_trend_and_health(self):
         critical = self._ingest(
             self.project, "DatabaseError: connection refused", level="fatal"
@@ -76,16 +82,18 @@ class DashboardAnalyticsTestCase(TestCase):
         low_incident.resolved_at = timezone.now()
         low_incident.save()
 
-        res = self.client.get("/api/v1/dashboard/overview/")
+        res = self.client.get(
+            "/api/v1/dashboard/overview/?project_id=%s" % self.project.id
+        )
         self.assertEqual(res.status_code, 200)
         overview = res.data["data"]["overview"]
 
-        self.assertEqual(overview["open_incidents"]["total"], 3)
+        self.assertEqual(overview["open_incidents"]["total"], 2)
         self.assertEqual(
             overview["open_incidents"]["by_severity"],
-            {"critical": 1, "high": 2, "medium": 0, "low": 0},
+            {"critical": 1, "high": 1, "medium": 0, "low": 0},
         )
-        self.assertEqual(overview["events_24h"], 4)
+        self.assertEqual(overview["events_24h"], 3)
         self.assertEqual(overview["resolved_24h"], 1)
         self.assertEqual(overview["health"], "critical")
         self.assertEqual(overview["event_trend"]["trend"], "up")
@@ -112,11 +120,18 @@ class DashboardAnalyticsTestCase(TestCase):
         self.assertEqual(overview["events_24h"], 1)
         self.assertEqual(overview["top_errors"][0]["title"], "OtherError")
 
+    def test_stats_requires_project_id(self):
+        res = self.client.get("/api/v1/dashboard/stats/?range=24h")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("project_id", res.data["error"]["fields"])
+
     def test_stats_bucket_shapes_and_events(self):
         self._ingest(self.project, "A", level="error")
         self._ingest(self.project, "B", level="error")
 
-        res = self.client.get("/api/v1/dashboard/stats/?range=24h")
+        res = self.client.get(
+            "/api/v1/dashboard/stats/?range=24h&project_id=%s" % self.project.id
+        )
         self.assertEqual(res.status_code, 200)
         stats = res.data["data"]["stats"]
         self.assertEqual(stats["range"], "24h")
@@ -127,14 +142,18 @@ class DashboardAnalyticsTestCase(TestCase):
         )
 
         for param, expected_len in (("7d", 7), ("30d", 30)):
-            res = self.client.get(f"/api/v1/dashboard/stats/?range={param}")
+            res = self.client.get(
+                f"/api/v1/dashboard/stats/?range={param}&project_id={self.project.id}"
+            )
             self.assertEqual(res.status_code, 200, param)
             points = res.data["data"]["stats"]["points"]
             self.assertLessEqual(len(points), expected_len + 1)
             self.assertGreaterEqual(len(points), expected_len)
 
     def test_invalid_range_is_rejected(self):
-        res = self.client.get("/api/v1/dashboard/stats/?range=year")
+        res = self.client.get(
+            "/api/v1/dashboard/stats/?range=year&project_id=%s" % self.project.id
+        )
         self.assertEqual(res.status_code, 400)
         self.assertFalse(res.data["success"])
 
@@ -175,15 +194,21 @@ class DashboardAnalyticsTestCase(TestCase):
         with patch(
             "apps.analytics.views.overview_for_user", return_value=cached_shape
         ) as mock_overview:
-            res1 = self.client.get("/api/v1/dashboard/overview/")
+            res1 = self.client.get(
+                "/api/v1/dashboard/overview/?project_id=%s" % self.project.id
+            )
             self.assertEqual(res1.status_code, 200)
             self.assertEqual(res1.data["data"]["overview"]["events_24h"], 7)
             # Identical repeat within the TTL is served from cache.
-            self.client.get("/api/v1/dashboard/overview/")
+            self.client.get(
+                "/api/v1/dashboard/overview/?project_id=%s" % self.project.id
+            )
             self.assertEqual(mock_overview.call_count, 1)
             # A new event write bumps the project version -> cache invalidated.
             bump_project_dashboard_version(self.project.id)
-            self.client.get("/api/v1/dashboard/overview/")
+            self.client.get(
+                "/api/v1/dashboard/overview/?project_id=%s" % self.project.id
+            )
             self.assertEqual(mock_overview.call_count, 2)
 
     def test_stats_served_from_cache_and_invalidated_on_event(self):
@@ -193,18 +218,26 @@ class DashboardAnalyticsTestCase(TestCase):
         with patch(
             "apps.analytics.views.stats_for_user", return_value=canned_points
         ) as mock_stats:
-            res1 = self.client.get("/api/v1/dashboard/stats/?range=24h")
+            res1 = self.client.get(
+                "/api/v1/dashboard/stats/?range=24h&project_id=%s" % self.project.id
+            )
             self.assertEqual(res1.status_code, 200)
             self.assertEqual(res1.data["data"]["stats"]["points"], canned_points)
             # Repeated 24h request hits the cache.
-            self.client.get("/api/v1/dashboard/stats/?range=24h")
+            self.client.get(
+                "/api/v1/dashboard/stats/?range=24h&project_id=%s" % self.project.id
+            )
             self.assertEqual(mock_stats.call_count, 1)
             # A different range is a distinct key -> recomputed.
-            self.client.get("/api/v1/dashboard/stats/?range=7d")
+            self.client.get(
+                "/api/v1/dashboard/stats/?range=7d&project_id=%s" % self.project.id
+            )
             self.assertEqual(mock_stats.call_count, 2)
             # A new event write invalidates the 24h key.
             bump_project_dashboard_version(self.project.id)
-            self.client.get("/api/v1/dashboard/stats/?range=24h")
+            self.client.get(
+                "/api/v1/dashboard/stats/?range=24h&project_id=%s" % self.project.id
+            )
             self.assertEqual(mock_stats.call_count, 3)
 
     def test_version_bump_changes_cache_key(self):
@@ -274,6 +307,15 @@ class ServicesHealthTestCase(TestCase):
             **kwargs,
         )
 
+    def test_services_requires_project_id(self):
+        res = self.client.get("/api/v1/services/health/")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("project_id", res.data["error"]["fields"])
+        res = self.client.get("/api/v1/dashboard/overview/")
+        self.assertEqual(res.status_code, 400)
+        res = self.client.get("/api/v1/dashboard/stats/?range=24h")
+        self.assertEqual(res.status_code, 400)
+
     def test_catalog_aggregates_volume_rate_status_and_environments(self):
         self._ingest(self.project, "FatalError: boom", level="fatal")
         self._ingest(self.project, "TimeoutError: gateway", level="error")
@@ -285,7 +327,9 @@ class ServicesHealthTestCase(TestCase):
             environment="staging",
         )
 
-        res = self.client.get("/api/v1/services/health/")
+        res = self.client.get(
+            "/api/v1/services/health/?project_id=%s" % self.project.id
+        )
         self.assertEqual(res.status_code, 200)
         catalog = res.json()["data"]["catalog"]
         self.assertEqual(catalog["range"], "24h")
@@ -315,7 +359,9 @@ class ServicesHealthTestCase(TestCase):
             self.project, "H3", level="fatal", service="critical-svc"
         )
 
-        res = self.client.get("/api/v1/services/health/")
+        res = self.client.get(
+            "/api/v1/services/health/?project_id=%s" % self.project.id
+        )
         names = [s["name"] for s in res.json()["data"]["catalog"]["services"]]
         self.assertEqual(
             names, ["critical-svc", "degraded-svc", "healthy-svc"]
@@ -342,21 +388,27 @@ class ServicesHealthTestCase(TestCase):
                 message=f"Fatal{hour}", project=self.project
             ).update(created_at=now - timedelta(hours=hour))
 
-        res = self.client.get("/api/v1/services/health/")
+        res = self.client.get(
+            "/api/v1/services/health/?project_id=%s" % self.project.id
+        )
         service = res.json()["data"]["catalog"]["services"][0]
         self.assertEqual(service["events"], 3)
         self.assertEqual(service["uptime"], 0)
 
     def test_uptime_is_100_when_no_fatal_events(self):
         self._ingest(self.project, "Warn: slow", level="warning")
-        res = self.client.get("/api/v1/services/health/")
+        res = self.client.get(
+            "/api/v1/services/health/?project_id=%s" % self.project.id
+        )
         service = res.json()["data"]["catalog"]["services"][0]
         self.assertEqual(service["uptime"], 100)
         self.assertEqual(service["status"], "healthy")
 
     def test_unattributed_events_are_excluded(self):
         self._ingest(self.project, "NoService", level="error", service="")
-        res = self.client.get("/api/v1/services/health/")
+        res = self.client.get(
+            "/api/v1/services/health/?project_id=%s" % self.project.id
+        )
         catalog = res.json()["data"]["catalog"]
         self.assertEqual(catalog["summary"]["total_services"], 0)
         self.assertEqual(catalog["services"], [])
@@ -369,12 +421,16 @@ class ServicesHealthTestCase(TestCase):
         )
         cache.clear()
 
-        res = self.client.get("/api/v1/services/health/?range=7d")
+        res = self.client.get(
+            "/api/v1/services/health/?range=7d&project_id=%s" % self.project.id
+        )
         self.assertEqual(res.status_code, 200)
         service = res.json()["data"]["catalog"]["services"][0]
         self.assertEqual(service["events"], 2)
 
-        res = self.client.get("/api/v1/services/health/?range=30d")
+        res = self.client.get(
+            "/api/v1/services/health/?range=30d&project_id=%s" % self.project.id
+        )
         self.assertEqual(res.status_code, 200)
         service = res.json()["data"]["catalog"]["services"][0]
         self.assertEqual(service["events"], 2)
@@ -388,7 +444,9 @@ class ServicesHealthTestCase(TestCase):
         self._ingest(self.project, "Mine", level="error")
         self._ingest(self.other_project, "AlsoMine", level="error")
 
-        res = self.client.get("/api/v1/services/health/")
+        res = self.client.get(
+            "/api/v1/services/health/?project_id=%s" % self.project.id
+        )
         names = [s["name"] for s in res.json()["data"]["catalog"]["services"]]
         self.assertEqual(len(names), 1)
 
@@ -425,18 +483,26 @@ class ServicesHealthTestCase(TestCase):
         )
 
     def test_invalid_range_rejected(self):
-        res = self.client.get("/api/v1/services/health/?range=year")
+        res = self.client.get(
+            "/api/v1/services/health/?range=year&project_id=%s" % self.project.id
+        )
         self.assertEqual(res.status_code, 400)
         self.assertIn("range", res.json()["error"]["fields"])
 
     def test_catalog_cache_is_version_bumped_by_writes(self):
         with patch("apps.analytics.views.services_health_for_user") as mock:
             mock.return_value = {"services": [], "summary": {}}
-            self.client.get("/api/v1/services/health/")
-            self.client.get("/api/v1/services/health/")
+            self.client.get(
+                "/api/v1/services/health/?project_id=%s" % self.project.id
+            )
+            self.client.get(
+                "/api/v1/services/health/?project_id=%s" % self.project.id
+            )
             self.assertEqual(mock.call_count, 1)
             self._make_event(self.project, "Invalidator")
-            self.client.get("/api/v1/services/health/")
+            self.client.get(
+                "/api/v1/services/health/?project_id=%s" % self.project.id
+            )
             self.assertEqual(mock.call_count, 2)
 
     def _make_event(self, project, message):

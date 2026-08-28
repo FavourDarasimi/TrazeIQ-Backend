@@ -29,6 +29,7 @@ def ingest_event(
     user_id: str = "",
     ip_address: str = "",
     metadata: dict | None = None,
+    breadcrumbs: list | None = None,
 ) -> Event:
     """Persist one raw error occurrence and keep the groups/incidents correct.
 
@@ -94,6 +95,7 @@ def ingest_event(
         user_id=user_id,
         ip_address=ip_address,
         metadata=metadata or {},
+        breadcrumbs=breadcrumbs or [],
         fingerprint=fp,
     )
 

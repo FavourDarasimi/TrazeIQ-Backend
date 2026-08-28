@@ -72,6 +72,7 @@ class Event(UUIDModel):
     user_id = models.CharField(max_length=128, blank=True, default="")
     ip_address = models.CharField(max_length=64, blank=True, default="")
     metadata = models.JSONField(blank=True, default=dict)
+    breadcrumbs = models.JSONField(blank=True, default=list)
     fingerprint = models.CharField(max_length=64, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

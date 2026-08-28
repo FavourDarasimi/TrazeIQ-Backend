@@ -33,6 +33,7 @@ class EventInputSerializer(serializers.Serializer):
         required=False, allow_blank=True, max_length=64, default=""
     )
     metadata = serializers.JSONField(required=False, default=dict)
+    breadcrumbs = serializers.JSONField(required=False, default=list)
 
     def validate(self, attrs):
         validate_payload_size(attrs["message"], attrs.get("stacktrace", ""))
@@ -56,6 +57,7 @@ class EventOutputSerializer(serializers.ModelSerializer):
             "user_id",
             "ip_address",
             "metadata",
+            "breadcrumbs",
             "fingerprint",
             "created_at",
         ]

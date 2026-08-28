@@ -6,6 +6,7 @@ from .views import (
     IncidentBulkAssignView,
     IncidentBulkResolveView,
     IncidentBulkUpdateView,
+    IncidentBulkView,
     IncidentCommentView,
     IncidentDetailView,
     IncidentListView,
@@ -15,6 +16,7 @@ from .views import (
 
 urlpatterns = [
     path("", IncidentListView.as_view(), name="incident-list"),
+    path("bulk/", IncidentBulkView.as_view(), name="incident-bulk"),
     path(
         "bulk-update/",
         IncidentBulkUpdateView.as_view(),

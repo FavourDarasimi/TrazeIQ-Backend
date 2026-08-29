@@ -42,11 +42,17 @@ _UUID_RE = re.compile(
 )
 _LINE_COL_RE = re.compile(r":\s*\d+(?::\s*\d+)?")
 _WS_RE = re.compile(r"\s+")
+# Probe/test header and its variable suffix (e.g. wallet-probe-2-1788031896)
+# must not create separate fingerprints — strip the whole header value.
+_PROBE_HEADER_RE = re.compile(r"\s+X-Traze-Test=\S+", re.IGNORECASE)
 
 
 def _normalize(text: str) -> str:
     text = _ADDRESS_RE.sub("0xADDR", text)
     text = _UUID_RE.sub("UUID", text)
+    text = _PROBE_HEADER_RE.sub("", text)
+    # Don't apply numeric-suffix stripping to the path-fingerprint itself;
+    # the X-Traze-Test strip already handles the wallet-probe-2-... case.
     text = _LINE_COL_RE.sub(":N", text)
     text = _WS_RE.sub(" ", text)
     return text.strip().lower()

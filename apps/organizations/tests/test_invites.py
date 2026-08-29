@@ -70,7 +70,7 @@ class InviteFlowTests(TestCase):
     def test_invite_to_existing_member_is_409(self):
         response = self.owner.post(
             f"/api/v1/organizations/{self.org_id}/invite/",
-            {"email": "owner@trazeiq.io"},
+            {"email": "owner@trazeiq.io", "role": "viewer"},
             format="json",
         )
         self.assertEqual(response.status_code, 409)

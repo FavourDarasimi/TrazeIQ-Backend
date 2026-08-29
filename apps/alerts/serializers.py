@@ -58,6 +58,9 @@ class AlertRuleInputSerializer(serializers.ModelSerializer):
         write_only=True,
         required=False,
     )
+    cooldown_minutes = serializers.IntegerField(
+        min_value=1, required=False, default=15
+    )
 
     class Meta:
         model = AlertRule

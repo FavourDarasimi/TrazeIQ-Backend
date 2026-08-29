@@ -82,8 +82,30 @@ def enqueue_alert_evaluation(incident_id: UUID) -> None:
     Import is deferred so ``tasks`` (which imports this module) can import
     it back without a cycle; a broker outage is swallowed+logged so
     ingestion never 500s (same contract as the AI enqueue).
+
+    In DEBUG (dev) without a running Celery worker the delay() would queue
+    but never run, leaving AlertLogs at 0. For alerts (unlike AI) the
+    dispatch is cheap and safe to run inline, so DEBUG falls back to
+    synchronous evaluation after the async enqueue.
     """
+    from django.conf import settings
+
     from .tasks import evaluate_alerts_for_incident
+
+    # In dev without a worker, run synchronously so the dashboard shows
+    # deliveries immediately (ingestion tests and local manual QA expect it).
+    # Production (DEBUG=False) stays fully async.
+    if getattr(settings, "DEBUG", False):
+        try:
+            incident = Incident.objects.get(pk=incident_id)
+            evaluate_incident(incident)
+            return
+        except Exception:
+            logger.exception(
+                "enqueue_alert_evaluation: sync fallback failed for %s",
+                incident_id,
+            )
+            return
 
     try:
         evaluate_alerts_for_incident.delay(str(incident_id))

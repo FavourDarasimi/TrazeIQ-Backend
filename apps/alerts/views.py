@@ -51,7 +51,18 @@ class AlertRuleListView(APIView):
         # Creating rules is project management — owner/admin only. The
         # target project is picked in the request body, so the permission
         # resolves it via get_permission_org_id.
+        # If project is missing/invalid/unknown, let the view return 400/404
+        # instead of a premature 403 from the permission.
         if self.request.method == "POST":
+            raw = self.request.data.get("project")
+            if not raw:
+                return [IsAuthenticated()]
+            try:
+                pid = UUID(str(raw))
+            except (TypeError, ValueError, AttributeError):
+                return [IsAuthenticated()]
+            if not Project.objects.filter(id=pid).exists():
+                return [IsAuthenticated()]
             return [IsAuthenticated(), IsAlertRuleOwnerOrAdmin()]
         return super().get_permissions()
 

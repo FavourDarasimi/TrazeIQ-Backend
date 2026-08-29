@@ -35,9 +35,7 @@ INVITABLE_ROLES = [
 
 class InviteInputSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    role = serializers.ChoiceField(
-        choices=INVITABLE_ROLES, default=MembershipRole.VIEWER
-    )
+    role = serializers.ChoiceField(choices=INVITABLE_ROLES)
 
 
 class InviteOutputSerializer(serializers.ModelSerializer):

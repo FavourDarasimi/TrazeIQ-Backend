@@ -15,13 +15,7 @@ per active period so a long-running breach doesn't fire on every evaluation.
 from django.conf import settings
 from django.db import models
 
-from apps.incidents.models import Severity as IncidentSeverity_  # noqa: F401  (re-exported below)
 from trazeiq_backend.models import UUIDModel
-
-
-# Re-export ``Severity`` so ``apps.slos.models.Severity`` exists without
-# shadowing the incident-severity import path used elsewhere.
-Severity = IncidentSeverity_
 
 
 class SLO(UUIDModel):

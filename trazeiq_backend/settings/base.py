@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "apps.analytics",
     "apps.auditlog",
     "apps.realtime",
+    "apps.slos",
 ]
 
 MIDDLEWARE = [

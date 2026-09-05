@@ -62,6 +62,21 @@ class Incident(UUIDModel):
                 name="idx_incident_project_status",
             ),
         ]
+        constraints = [
+            # Phase 5E: exactly one OPEN incident per error group, enforced
+            # by the database — the race-safe counterpart to the unique
+            # (project, fingerprint) key on ErrorGroup. Concurrent
+            # first-ingests that both pass the "reuse open incident?" check
+            # collide here instead of creating duplicate tickets; the
+            # ingestion path catches the IntegrityError and reuses the
+            # winner. Other statuses are unaffected, so resolving still
+            # frees the group for a future reopen.
+            models.UniqueConstraint(
+                fields=["error_group"],
+                condition=models.Q(status="open"),
+                name="uniq_open_incident_per_group",
+            ),
+        ]
 
     def __str__(self):
         return f"#{self.pk} {self.severity}/{self.status} {self.error_group}"

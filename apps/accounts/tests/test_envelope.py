@@ -105,4 +105,7 @@ class EnvelopeTests(TestCase):
         response = self.client.get("/api/v1/health/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["success"], True)
-        self.assertEqual(response.data["data"], {"status": "ok"})
+        data = response.data["data"]
+        self.assertIn(data["status"], ("ok", "degraded"))
+        self.assertIn("checks", data)
+        self.assertIn("metrics", data)

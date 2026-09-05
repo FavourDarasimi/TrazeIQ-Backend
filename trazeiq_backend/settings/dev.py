@@ -18,8 +18,29 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
+        # Single-writer SQLite serializes concurrent writers instead of
+        # queueing them like Postgres — a longer busy timeout keeps local
+        # crash-loop demos from 500ing under threaded bursts. Prod uses
+        # Postgres (see prod.py) and is unaffected.
+        "OPTIONS": {"timeout": 30},
     }
 }
+
+# WAL mode narrows the SQLite-vs-Postgres gap further for local crash-loop
+# demos: writers no longer upgrade-deadlock concurrent transactions the way
+# rollback-journal mode does, so threaded bursts behave instead of 500ing.
+from django.db.backends.signals import connection_created  # noqa: E402
+
+
+def _enable_sqlite_wal(sender, connection, **kwargs):
+    if connection.vendor == "sqlite":
+        with connection.cursor() as cursor:
+            cursor.execute("PRAGMA journal_mode=WAL;")
+
+
+connection_created.connect(
+    _enable_sqlite_wal, dispatch_uid="trazeiq-dev-sqlite-wal"
+)
 
 # OTP delivery in dev goes to the console log — no SMTP required. AUTH_DEV_OTP
 # (000000) is accepted for any user until real email delivery is configured.

@@ -43,6 +43,32 @@ DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="TrazeIQ <no-reply@trazei
 
 AUTH_COOKIE_SECURE = env.bool("AUTH_COOKIE_SECURE", default=True)
 
+# ---- Production hardening (Phase 5D) ----
+# HTTPS everywhere: redirect plain HTTP to HTTPS and tell browsers to only
+# ever use HTTPS for this host (HSTS, one year + subdomains by default).
+SECURE_SSL_REDIRECT = env.bool("DJANGO_SECURE_SSL_REDIRECT", default=True)
+SECURE_HSTS_SECONDS = env.int("DJANGO_SECURE_HSTS_SECONDS", default=31536000)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool(
+    "DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", default=True
+)
+SECURE_HSTS_PRELOAD = env.bool("DJANGO_SECURE_HSTS_PRELOAD", default=False)
+
+# Cookies: never send session/CSRF cookies over plain HTTP.
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+
+# Only enable this behind a proxy/LB that terminates TLS and sets
+# X-Forwarded-Proto — otherwise a client could spoof request.is_secure().
+# When enabled, SECURE_SSL_REDIRECT trusts the forwarded proto header.
+if env.bool("DJANGO_BEHIND_PROXY", default=False):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# CORS/CSRF origins are required in prod — no localhost fallback. The deploy
+# fails fast at boot if these are missing, rather than silently allowing the
+# wrong origins (or none, which would break the cookie flows).
+CORS_ALLOWED_ORIGINS = env.list("DJANGO_CORS_ALLOWED_ORIGINS")
+CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS")
+
 # Shared cache for throttles/rate limits. Use Redis when DJANGO_REDIS_URL is
 # set (else fall back to per-process memory, which under-counts in multi-worker
 # deployments).

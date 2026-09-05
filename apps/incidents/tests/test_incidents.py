@@ -6,6 +6,7 @@ data flows through list/detail/timeline, filters work, and tenant isolation
 """
 
 from django.core.cache import cache
+from django.db import IntegrityError
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 from uuid import uuid4
@@ -210,3 +211,31 @@ class IncidentTenantIsolationTests(TestCase):
             f"/api/v1/incidents/{self.alice_incident_id}/"
         )
         self.assertEqual(response.status_code, 200)
+
+
+class IncidentOpenUniquenessTests(IncidentSetupMixin, TestCase):
+    """Phase 5E: exactly one OPEN incident per error group, enforced by the
+    database so concurrent first-ingests can't create duplicate tickets."""
+
+    def test_second_open_incident_for_group_is_rejected(self):
+        self.add_event(message="KeyError: boom")
+        incident = self.list_incidents().data["data"]["incidents"][0]
+        group_id = incident["error_group"]["id"]
+        with self.assertRaises(IntegrityError):
+            Incident.objects.create(
+                error_group_id=group_id,
+                project_id=incident["project"]["id"],
+                status=Incident.Status.OPEN,
+            )
+
+    def test_resolve_then_reingest_opens_a_new_incident(self):
+        self.add_event(message="KeyError: boom")
+        incident_id = self.list_incidents().data["data"]["incidents"][0]["id"]
+        resolve = self.client.post(f"/api/v1/incidents/{incident_id}/resolve/")
+        self.assertEqual(resolve.status_code, 200)
+        # Resolving frees the group: the next occurrence reopens fresh.
+        self.add_event(message="KeyError: boom")
+        incidents = self.list_incidents().data["data"]["incidents"]
+        self.assertEqual(len(incidents), 2)
+        statuses = sorted(i["status"] for i in incidents)
+        self.assertEqual(statuses, ["open", "resolved"])

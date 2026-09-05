@@ -21,3 +21,5 @@ class UUIDModel(models.Model):
 
     class Meta:
         abstract = True
+
+        # new

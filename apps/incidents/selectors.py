@@ -3,7 +3,7 @@
 
 from uuid import UUID
 
-from django.db.models import OuterRef, QuerySet, Subquery
+from django.db.models import OuterRef, Q, QuerySet, Subquery
 
 from apps.events.models import Event
 
@@ -42,8 +42,15 @@ def list_incidents_for_user(
     status=None,
     severity=None,
     project_id: UUID | None = None,
+    search: str | None = None,
 ) -> QuerySet[Incident]:
-    """Incidents the user can see, most recently-active first."""
+    """Incidents the user can see, most recently-active first.
+
+    ``search`` is a portable substring match (``icontains`` — works on both
+    SQLite dev and Postgres prod) across the error-group title and the
+    group's event details (message, service, endpoint). Empty/blank search
+    is a no-op so ``?search=`` never filters everything out.
+    """
     qs = _incidents_for_user(user)
     if status:
         qs = qs.filter(status=status)
@@ -51,6 +58,15 @@ def list_incidents_for_user(
         qs = qs.filter(severity=severity)
     if project_id:
         qs = qs.filter(project_id=project_id)
+    if search:
+        term = search.strip()[:200]
+        if term:
+            qs = qs.filter(
+                Q(error_group__title__icontains=term)
+                | Q(error_group__events__message__icontains=term)
+                | Q(error_group__events__service__icontains=term)
+                | Q(error_group__events__endpoint__icontains=term)
+            ).distinct()
     return _with_latest_event(qs).order_by("-error_group__last_seen")
 
 

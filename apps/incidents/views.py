@@ -54,7 +54,7 @@ def _incident_schema(name: str):
 
 class IncidentListView(APIView):
     """GET /api/incidents/ — org-scoped list with status/severity/project
-    filters, newest-activity first."""
+    filters plus free-text search, newest-activity first."""
 
     permission_classes = [IsAuthenticated]
 
@@ -65,7 +65,8 @@ class IncidentListView(APIView):
         description=(
             "Incidents from every project in the caller's organizations, "
             "most recently-active first. Filter by status, severity or "
-            "project."
+            "project, or free-text search across the error-group title and "
+            "event message/service/endpoint."
         ),
         parameters=[
             inline_serializer(
@@ -78,6 +79,7 @@ class IncidentListView(APIView):
                         choices=Incident.Severity.choices, required=False
                     ),
                     "project": serializers.UUIDField(required=False),
+                    "search": serializers.CharField(required=False),
                 },
             )
         ],
@@ -120,11 +122,17 @@ class IncidentListView(APIView):
                     {"project": "Must be a valid UUID."}
                 )
 
+        raw_search = query.get("search")
+        search = raw_search.strip()[:200] if raw_search else None
+        if search == "":
+            search = None
+
         incidents = list_incidents_for_user(
             request.user,
             status=query.get("status"),
             severity=query.get("severity"),
             project_id=project_id,
+            search=search,
         )
         events = latest_events_by_id(incidents)
         return api_success(

@@ -45,6 +45,77 @@ VALID_FILTERS = {
 }
 
 
+def _parse_bulk_ids(raw_ids) -> list[UUID]:
+    """Validate a bulk ``incident_ids`` list into UUIDs (400 otherwise)."""
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise serializers.ValidationError(
+            {"incident_ids": "A non-empty list of UUIDs is required."}
+        )
+    valid_uuids = []
+    for item in raw_ids:
+        try:
+            valid_uuids.append(UUID(str(item)))
+        except (TypeError, ValueError, AttributeError):
+            raise serializers.ValidationError(
+                {"incident_ids": f"Invalid UUID: {item}"}
+            )
+    return valid_uuids
+
+
+def _bulk_result(updated, valid_uuids, *, message=None):
+    """Shared bulk response: count + per-item breakdown + rows.
+
+    ``updated_ids`` are the incidents actually changed; ``skipped_ids`` are
+    requested IDs that don't exist or aren't visible to the caller (echoing
+    the caller's own input leaks nothing — unknown and foreign IDs are
+    indistinguishable by design).
+    """
+    seen: set[UUID] = set()
+    updated_ids = []
+    for incident in updated:
+        if incident.id not in seen:
+            seen.add(incident.id)
+            updated_ids.append(str(incident.id))
+    skipped_ids = []
+    for uuid in valid_uuids:
+        if uuid not in seen:
+            seen.add(uuid)
+            skipped_ids.append(str(uuid))
+    events = latest_events_by_id(updated)
+    data = {
+        "updated_count": len(updated),
+        "updated_ids": updated_ids,
+        "skipped_ids": skipped_ids,
+        "incidents": IncidentOutputSerializer(
+            updated, many=True, context={"events": events}
+        ).data,
+    }
+    if message is not None:
+        return api_success(data=data, message=message)
+    return api_success(data=data)
+
+
+def _fan_out_bulk(updated, *, event_name="incident.updated", evaluate_alerts=True):
+    """Realtime + alert side-effects for a bulk result.
+
+    Pusher publishes stay per-incident (the realtime contract is per
+    incident on its project channel). Alert re-evaluation is skipped when
+    the update cannot change rule matching — rules only match severity and
+    status, so pure assignment changes never re-evaluate.
+    """
+    for incident in updated:
+        publish_incident_event(incident, event_name=event_name)
+        if evaluate_alerts:
+            enqueue_alert_evaluation(incident.pk)
+
+
+def _bulk_audit_target(updated, verb: str, extra: str = "") -> str:
+    """Audit target carrying the incident IDs so a bulk action is traceable
+    back to exactly which incidents it touched."""
+    ids = ", ".join(str(incident.id) for incident in updated)
+    return f"Bulk {verb} {len(updated)} incident(s): {ids}{extra}"
+
+
 def _incident_schema(name: str):
     return inline_serializer(
         name,
@@ -425,6 +496,12 @@ class IncidentBulkUpdateView(APIView):
                     "IncidentBulkUpdateData",
                     fields={
                         "updated_count": serializers.IntegerField(),
+                        "updated_ids": serializers.ListField(
+                            child=serializers.UUIDField()
+                        ),
+                        "skipped_ids": serializers.ListField(
+                            child=serializers.UUIDField()
+                        ),
                         "incidents": IncidentOutputSerializer(many=True),
                     },
                 ),
@@ -435,26 +512,12 @@ class IncidentBulkUpdateView(APIView):
         },
     )
     def post(self, request):
-        raw_ids = request.data.get("incident_ids", [])
-        if not isinstance(raw_ids, list) or not raw_ids:
-            raise serializers.ValidationError(
-                {"incident_ids": "A non-empty list of UUIDs is required."}
-            )
-
-        valid_uuids = []
-        for item in raw_ids:
-            try:
-                valid_uuids.append(UUID(str(item)))
-            except (TypeError, ValueError, AttributeError):
-                raise serializers.ValidationError(
-                    {"incident_ids": f"Invalid UUID: {item}"}
-                )
+        valid_uuids = _parse_bulk_ids(request.data.get("incident_ids", []))
 
         incidents = list(get_updatable_incidents_for_user(valid_uuids, request.user))
         if not incidents:
-            return api_success(
-                data={"updated_count": 0, "incidents": []},
-                message="No updatable incidents found.",
+            return _bulk_result(
+                [], valid_uuids, message="No updatable incidents found."
             )
 
         org_ids = {inc.project.organization_id for inc in incidents}
@@ -474,9 +537,10 @@ class IncidentBulkUpdateView(APIView):
             incidents, actor=request.user, **updates
         )
 
-        for incident in updated:
-            publish_incident_event(incident, event_name="incident.updated")
-            enqueue_alert_evaluation(incident.pk)
+        _fan_out_bulk(
+            updated,
+            evaluate_alerts=any(k in updates for k in ("status", "severity")),
+        )
 
         if updated:
             first_org = updated[0].project.organization
@@ -485,18 +549,12 @@ class IncidentBulkUpdateView(APIView):
                 actor=request.user,
                 organization=first_org,
                 action=AuditAction.INCIDENTS_BULK_UPDATED,
-                target=f"Bulk updated {len(updated)} incident(s): {change_summary}",
+                target=_bulk_audit_target(
+                    updated, "updated", extra=f" ({change_summary})"
+                ),
             )
 
-        events = latest_events_by_id(updated)
-        return api_success(
-            data={
-                "updated_count": len(updated),
-                "incidents": IncidentOutputSerializer(
-                    updated, many=True, context={"events": events}
-                ).data,
-            }
-        )
+        return _bulk_result(updated, valid_uuids)
 
 
 class IncidentBulkResolveView(APIView):
@@ -519,6 +577,12 @@ class IncidentBulkResolveView(APIView):
                     "IncidentBulkResolveData",
                     fields={
                         "updated_count": serializers.IntegerField(),
+                        "updated_ids": serializers.ListField(
+                            child=serializers.UUIDField()
+                        ),
+                        "skipped_ids": serializers.ListField(
+                            child=serializers.UUIDField()
+                        ),
                         "incidents": IncidentOutputSerializer(many=True),
                     },
                 ),
@@ -529,35 +593,19 @@ class IncidentBulkResolveView(APIView):
         },
     )
     def post(self, request):
-        raw_ids = request.data.get("incident_ids", [])
-        if not isinstance(raw_ids, list) or not raw_ids:
-            raise serializers.ValidationError(
-                {"incident_ids": "A non-empty list of UUIDs is required."}
-            )
-
-        valid_uuids = []
-        for item in raw_ids:
-            try:
-                valid_uuids.append(UUID(str(item)))
-            except (TypeError, ValueError, AttributeError):
-                raise serializers.ValidationError(
-                    {"incident_ids": f"Invalid UUID: {item}"}
-                )
+        valid_uuids = _parse_bulk_ids(request.data.get("incident_ids", []))
 
         incidents = list(get_updatable_incidents_for_user(valid_uuids, request.user))
         if not incidents:
-            return api_success(
-                data={"updated_count": 0, "incidents": []},
-                message="No updatable incidents found.",
+            return _bulk_result(
+                [], valid_uuids, message="No updatable incidents found."
             )
 
         updated = bulk_update_incidents(
             incidents, actor=request.user, status=Incident.Status.RESOLVED
         )
 
-        for incident in updated:
-            publish_incident_event(incident, event_name="incident.resolved")
-            enqueue_alert_evaluation(incident.pk)
+        _fan_out_bulk(updated, event_name="incident.resolved")
 
         if updated:
             first_org = updated[0].project.organization
@@ -565,18 +613,77 @@ class IncidentBulkResolveView(APIView):
                 actor=request.user,
                 organization=first_org,
                 action=AuditAction.INCIDENTS_BULK_UPDATED,
-                target=f"Bulk resolved {len(updated)} incident(s)",
+                target=_bulk_audit_target(updated, "resolved"),
             )
 
-        events = latest_events_by_id(updated)
-        return api_success(
-            data={
-                "updated_count": len(updated),
-                "incidents": IncidentOutputSerializer(
-                    updated, many=True, context={"events": events}
-                ).data,
-            }
+        return _bulk_result(updated, valid_uuids)
+
+
+class IncidentBulkIgnoreView(APIView):
+    """POST /api/v1/incidents/bulk-ignore/ — mark multiple incidents ignored.
+
+    The archive counterpart to bulk-resolve: ignored incidents leave the
+    active workflow without counting as fixed. Idempotent for already-ignored
+    rows (they are returned as updated, like the resolve endpoint does).
+    """
+
+    permission_classes = [IsAuthenticated, IsBulkIncidentDeveloperOrAbove]
+
+    @extend_schema(
+        tags=["incidents"],
+        operation_id="incidents_bulk_ignore",
+        summary="Bulk ignore incidents",
+        request=inline_serializer(
+            "BulkIgnoreRequest",
+            fields={"incident_ids": serializers.ListField(child=serializers.UUIDField())},
+        ),
+        responses={
+            200: envelope_schema(
+                "IncidentBulkIgnoreOk",
+                payload=inline_serializer(
+                    "IncidentBulkIgnoreData",
+                    fields={
+                        "updated_count": serializers.IntegerField(),
+                        "updated_ids": serializers.ListField(
+                            child=serializers.UUIDField()
+                        ),
+                        "skipped_ids": serializers.ListField(
+                            child=serializers.UUIDField()
+                        ),
+                        "incidents": IncidentOutputSerializer(many=True),
+                    },
+                ),
+            ),
+            400: envelope_schema("IncidentBulkIgnoreValidation", error=True),
+            401: envelope_schema("IncidentBulkIgnoreUnauthorized", error=True),
+            403: envelope_schema("IncidentBulkIgnoreForbidden", error=True),
+        },
+    )
+    def post(self, request):
+        valid_uuids = _parse_bulk_ids(request.data.get("incident_ids", []))
+
+        incidents = list(get_updatable_incidents_for_user(valid_uuids, request.user))
+        if not incidents:
+            return _bulk_result(
+                [], valid_uuids, message="No updatable incidents found."
+            )
+
+        updated = bulk_update_incidents(
+            incidents, actor=request.user, status=Incident.Status.IGNORED
         )
+
+        _fan_out_bulk(updated)
+
+        if updated:
+            first_org = updated[0].project.organization
+            record_audit_log(
+                actor=request.user,
+                organization=first_org,
+                action=AuditAction.INCIDENTS_BULK_UPDATED,
+                target=_bulk_audit_target(updated, "ignored"),
+            )
+
+        return _bulk_result(updated, valid_uuids)
 
 
 class IncidentBulkAssignView(APIView):
@@ -602,6 +709,12 @@ class IncidentBulkAssignView(APIView):
                     "IncidentBulkAssignData",
                     fields={
                         "updated_count": serializers.IntegerField(),
+                        "updated_ids": serializers.ListField(
+                            child=serializers.UUIDField()
+                        ),
+                        "skipped_ids": serializers.ListField(
+                            child=serializers.UUIDField()
+                        ),
                         "incidents": IncidentOutputSerializer(many=True),
                     },
                 ),
@@ -613,25 +726,12 @@ class IncidentBulkAssignView(APIView):
     )
     def post(self, request):
         raw_ids = request.data.get("incident_ids", [])
-        if not isinstance(raw_ids, list) or not raw_ids:
-            raise serializers.ValidationError(
-                {"incident_ids": "A non-empty list of UUIDs is required."}
-            )
-
-        valid_uuids = []
-        for item in raw_ids:
-            try:
-                valid_uuids.append(UUID(str(item)))
-            except (TypeError, ValueError, AttributeError):
-                raise serializers.ValidationError(
-                    {"incident_ids": f"Invalid UUID: {item}"}
-                )
+        valid_uuids = _parse_bulk_ids(raw_ids)
 
         incidents = list(get_updatable_incidents_for_user(valid_uuids, request.user))
         if not incidents:
-            return api_success(
-                data={"updated_count": 0, "incidents": []},
-                message="No updatable incidents found.",
+            return _bulk_result(
+                [], valid_uuids, message="No updatable incidents found."
             )
 
         org_ids = {inc.project.organization_id for inc in incidents}
@@ -647,9 +747,9 @@ class IncidentBulkAssignView(APIView):
             assigned_to=serializer.validated_data.get("assigned_to"),
         )
 
-        for incident in updated:
-            publish_incident_event(incident, event_name="incident.updated")
-            enqueue_alert_evaluation(incident.pk)
+        # Assignment changes cannot match alert rules (severity/status only),
+        # so alert re-evaluation is skipped here.
+        _fan_out_bulk(updated, evaluate_alerts=False)
 
         if updated:
             first_org = updated[0].project.organization
@@ -658,18 +758,14 @@ class IncidentBulkAssignView(APIView):
                 actor=request.user,
                 organization=first_org,
                 action=AuditAction.INCIDENTS_BULK_UPDATED,
-                target=f"Bulk assigned {len(updated)} incident(s) to {assignee.email if assignee else 'unassigned'}",
+                target=_bulk_audit_target(
+                    updated,
+                    "assigned",
+                    extra=f" to {assignee.email if assignee else 'unassigned'}",
+                ),
             )
 
-        events = latest_events_by_id(updated)
-        return api_success(
-            data={
-                "updated_count": len(updated),
-                "incidents": IncidentOutputSerializer(
-                    updated, many=True, context={"events": events}
-                ).data,
-            }
-        )
+        return _bulk_result(updated, valid_uuids)
 
 
 class IncidentBulkView(APIView):
@@ -680,8 +776,8 @@ class IncidentBulkView(APIView):
     `action: resolve` maps to `status: resolved`. Any `status`/`severity`/
     `assigned_to` fields are forwarded to the bulk service. This keeps the
     floating BulkActionBar working even if the UI was built against the generic
-    URL, while the specific `bulk-resolve`/`bulk-update`/`bulk-assign` routes
-    remain the canonical ones.
+    URL, while the specific `bulk-resolve`/`bulk-update`/`bulk-assign`/
+    `bulk-ignore` routes remain the canonical ones.
     """
 
     permission_classes = [IsAuthenticated, IsBulkIncidentDeveloperOrAbove]
@@ -723,6 +819,12 @@ class IncidentBulkView(APIView):
                     "IncidentBulkData",
                     fields={
                         "updated_count": serializers.IntegerField(),
+                        "updated_ids": serializers.ListField(
+                            child=serializers.UUIDField()
+                        ),
+                        "skipped_ids": serializers.ListField(
+                            child=serializers.UUIDField()
+                        ),
                         "incidents": IncidentOutputSerializer(many=True),
                     },
                 ),
@@ -736,25 +838,12 @@ class IncidentBulkView(APIView):
         raw_ids = request.data.get("incident_ids")
         if raw_ids is None:
             raw_ids = request.data.get("ids", [])
-        if not isinstance(raw_ids, list) or not raw_ids:
-            raise serializers.ValidationError(
-                {"incident_ids": "A non-empty list of UUIDs is required."}
-            )
-
-        valid_uuids = []
-        for item in raw_ids:
-            try:
-                valid_uuids.append(UUID(str(item)))
-            except (TypeError, ValueError, AttributeError):
-                raise serializers.ValidationError(
-                    {"incident_ids": f"Invalid UUID: {item}"}
-                )
+        valid_uuids = _parse_bulk_ids(raw_ids)
 
         incidents = list(get_updatable_incidents_for_user(valid_uuids, request.user))
         if not incidents:
-            return api_success(
-                data={"updated_count": 0, "incidents": []},
-                message="No updatable incidents found.",
+            return _bulk_result(
+                [], valid_uuids, message="No updatable incidents found."
             )
 
         # Normalize action -> status
@@ -800,15 +889,15 @@ class IncidentBulkView(APIView):
         }
         updated = bulk_update_incidents(incidents, actor=request.user, **updates)
 
-        for incident in updated:
-            # Use resolved event name when resolving, otherwise updated.
-            event_name = (
+        _fan_out_bulk(
+            updated,
+            event_name=(
                 "incident.resolved"
                 if updates.get("status") == Incident.Status.RESOLVED
                 else "incident.updated"
-            )
-            publish_incident_event(incident, event_name=event_name)
-            enqueue_alert_evaluation(incident.pk)
+            ),
+            evaluate_alerts=any(k in updates for k in ("status", "severity")),
+        )
 
         if updated:
             first_org = updated[0].project.organization
@@ -817,22 +906,17 @@ class IncidentBulkView(APIView):
                 actor=request.user,
                 organization=first_org,
                 action=AuditAction.INCIDENTS_BULK_UPDATED,
-                target=f"Bulk updated {len(updated)} incident(s): {change_summary}",
+                target=_bulk_audit_target(
+                    updated, "updated", extra=f" ({change_summary})"
+                ),
             )
 
-        events = latest_events_by_id(updated)
-        return api_success(
-            data={
-                "updated_count": len(updated),
-                "incidents": IncidentOutputSerializer(
-                    updated, many=True, context={"events": events}
-                ).data,
-            }
-        )
+        return _bulk_result(updated, valid_uuids)
 
 
 __all__ = [
     "IncidentBulkAssignView",
+    "IncidentBulkIgnoreView",
     "IncidentBulkResolveView",
     "IncidentBulkUpdateView",
     "IncidentCommentView",

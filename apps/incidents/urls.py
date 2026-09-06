@@ -4,6 +4,7 @@ from apps.ai.views import IncidentAnalysisView, IncidentAnalyzeView
 
 from .views import (
     IncidentBulkAssignView,
+    IncidentBulkIgnoreView,
     IncidentBulkResolveView,
     IncidentBulkUpdateView,
     IncidentBulkView,
@@ -31,6 +32,11 @@ urlpatterns = [
         "bulk-assign/",
         IncidentBulkAssignView.as_view(),
         name="incident-bulk-assign",
+    ),
+    path(
+        "bulk-ignore/",
+        IncidentBulkIgnoreView.as_view(),
+        name="incident-bulk-ignore",
     ),
     path(
         "<uuid:incident_id>/",

@@ -1,10 +1,11 @@
-"""Tests for bulk incident operations (bulk-update, bulk-resolve, bulk-assign)."""
+"""Tests for bulk incident operations (bulk-update, bulk-resolve, bulk-assign, bulk-ignore)."""
 
 from django.core.cache import cache
 from django.test import TestCase
 from rest_framework.test import APIClient
 from uuid import uuid4
 
+from apps.auditlog.models import AuditAction, AuditLog
 from apps.events.tests.test_events import create_project, register_and_login
 from apps.incidents.models import Incident, TimelineEntry
 from apps.incidents.tests.test_incidents import IncidentSetupMixin
@@ -96,3 +97,78 @@ class BulkIncidentOperationsTests(IncidentSetupMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         # 0 updated because Bob has no access to Alice's incidents
         self.assertEqual(response.data["data"]["updated_count"], 0)
+
+    def test_bulk_ignore_endpoint(self):
+        target_ids = self.incident_ids[:2]
+        response = self.client.post(
+            "/api/v1/incidents/bulk-ignore/",
+            {"incident_ids": target_ids},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.data["data"]
+        self.assertEqual(data["updated_count"], 2)
+        self.assertEqual(set(data["updated_ids"]), set(target_ids))
+        self.assertEqual(data["skipped_ids"], [])
+
+        ignored_count = Incident.objects.filter(
+            id__in=target_ids, status=Incident.Status.IGNORED
+        ).count()
+        self.assertEqual(ignored_count, 2)
+        # Untouched incident stays open.
+        self.assertTrue(
+            Incident.objects.filter(
+                id=self.incident_ids[2], status=Incident.Status.OPEN
+            ).exists()
+        )
+
+    def test_bulk_response_reports_updated_and_skipped_ids(self):
+        unknown_id = str(uuid4())
+        response = self.client.post(
+            "/api/v1/incidents/bulk-resolve/",
+            {"incident_ids": [self.incident_ids[0], unknown_id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.data["data"]
+        self.assertEqual(data["updated_count"], 1)
+        self.assertEqual(data["updated_ids"], [self.incident_ids[0]])
+        self.assertEqual(data["skipped_ids"], [unknown_id])
+
+    def test_bulk_audit_target_lists_incident_ids(self):
+        target_ids = self.incident_ids[:2]
+        self.client.post(
+            "/api/v1/incidents/bulk-resolve/",
+            {"incident_ids": target_ids},
+            format="json",
+        )
+        log = AuditLog.objects.filter(
+            action=AuditAction.INCIDENTS_BULK_UPDATED
+        ).order_by("-created_at").first()
+        self.assertIsNotNone(log)
+        for inc_id in target_ids:
+            self.assertIn(inc_id, log.target)
+
+    def test_bulk_assign_skips_alert_reevaluation(self):
+        # Assignment cannot match alert rules (severity/status only), so no
+        # AlertLog rows may appear from a pure bulk-assign.
+        from apps.alerts.models import AlertLog, AlertRule
+
+        project_id = self.list_incidents().data["data"]["incidents"][0][
+            "project"
+        ]["id"]
+        AlertRule.objects.create(
+            project_id=project_id,
+            condition={"severity": "high"},
+            channel="email",
+            target="team@example.com",
+            cooldown_minutes=15,
+        )
+        response = self.client.post(
+            "/api/v1/incidents/bulk-assign/",
+            {"incident_ids": self.incident_ids[:2], "assigned_to": None},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["data"]["updated_count"], 2)
+        self.assertEqual(AlertLog.objects.count(), 0)

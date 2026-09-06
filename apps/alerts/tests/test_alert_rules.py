@@ -397,3 +397,36 @@ class AlertLogViewTests(AlertSetupMixin):
         response = other.get("/api/v1/alerts/logs/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["data"]["logs"], [])
+
+class NonObjectBodyTests(AlertSetupMixin):
+    """Regression: bare array/string/null JSON bodies must 400, never 500.
+
+    ``request.data.get`` on a parsed list/str/None raises AttributeError
+    inside get_permissions/post/patch — this class pins the 400 contract
+    on every alert-rule write path.
+    """
+
+    RAW_BODIES = ("[1,2]", '"hi"', "null", "400")
+
+    def test_create_rejects_non_object_bodies(self):
+        for raw in self.RAW_BODIES:
+            with self.subTest(body=raw):
+                response = self.owner.post(
+                    "/api/v1/alerts/rules/",
+                    data=raw,
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertFalse(response.data["success"])
+
+    def test_patch_rejects_non_object_bodies(self):
+        rule_id = self.create_rule().data["data"]["rule"]["id"]
+        for raw in self.RAW_BODIES:
+            with self.subTest(body=raw):
+                response = self.owner.patch(
+                    f"/api/v1/alerts/rules/{rule_id}/",
+                    data=raw,
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertFalse(response.data["success"])

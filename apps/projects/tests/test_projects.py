@@ -199,3 +199,68 @@ class ProjectTenantIsolationTests(TestCase):
         detail = self.alice.get(f"/api/v1/projects/{self.project_id}/")
         self.assertEqual(detail.status_code, 200)
         self.assertEqual(detail.data["data"]["project"]["name"], "Secret")
+
+class ProjectNonObjectBodyTests(TestCase):
+    """Regression: bare array/string/null JSON bodies must 400, never 500.
+
+    Project creation resolves the target org from the body inside
+    ``get_permission_org_id`` — before the view ever runs — so the guard
+    has to live there too.
+    """
+
+    RAW_BODIES = ("[1,2]", '"hi"', "null", "400")
+
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        register_and_login(self.client, "dev@trazeiq.io")
+        create_org(self.client, "Acme")
+
+    def test_create_rejects_non_object_bodies(self):
+        for raw in self.RAW_BODIES:
+            with self.subTest(body=raw):
+                response = self.client.post(
+                    "/api/v1/projects/",
+                    data=raw,
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertFalse(response.data["success"])
+
+
+class ProjectListDetailConsistencyTests(TestCase):
+    """Every project id returned by the list endpoint must resolve on the
+    detail endpoint for the same caller (no phantom rows)."""
+
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        register_and_login(self.client, "dev@trazeiq.io")
+        self.organization_id = create_org(self.client, "Acme")
+
+    def test_listed_projects_all_resolve_on_detail(self):
+        for name in ("Web", "API", "Worker"):
+            response = self.client.post(
+                "/api/v1/projects/",
+                {"name": name, "organization": self.organization_id},
+                format="json",
+            )
+            self.assertEqual(response.status_code, 201)
+
+        listed = self.client.get("/api/v1/projects/")
+        self.assertEqual(listed.status_code, 200)
+        projects = listed.data["data"]["projects"]
+        self.assertEqual(len(projects), 3)
+
+        seen_ids = set()
+        for project in projects:
+            with self.subTest(project=project["id"]):
+                detail = self.client.get(
+                    f"/api/v1/projects/{project['id']}/"
+                )
+                self.assertEqual(detail.status_code, 200)
+                self.assertEqual(
+                    detail.data["data"]["project"]["id"], project["id"]
+                )
+                seen_ids.add(project["id"])
+        self.assertEqual(len(seen_ids), 3)

@@ -133,3 +133,20 @@ class PusherAuthTestCase(TestCase):
         response = self._auth(self._channel(self.project))
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["error"]["code"], "PUSHER_NOT_CONFIGURED")
+
+
+class PusherAuthNonObjectBodyTests(PusherAuthTestCase):
+    """Regression: bare array/string/null JSON bodies must 400, never 500."""
+
+    RAW_BODIES = ("[1,2]", '"hi"', "null", "400")
+
+    def test_auth_rejects_non_object_bodies(self):
+        self.client.force_authenticate(user=self.owner)
+        for raw in self.RAW_BODIES:
+            with self.subTest(body=raw):
+                response = self.client.post(
+                    "/api/v1/pusher/auth/",
+                    data=raw,
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 400)

@@ -15,6 +15,7 @@ from uuid import UUID
 from apps.projects.models import Project
 from apps.projects.selectors import get_project_for_user
 
+from trazeiq_backend.requests import body_as_dict
 from trazeiq_backend.responses import api_success, envelope_schema
 
 from .permissions import IsAlertRuleOwnerOrAdmin
@@ -54,7 +55,9 @@ class AlertRuleListView(APIView):
         # If project is missing/invalid/unknown, let the view return 400/404
         # instead of a premature 403 from the permission.
         if self.request.method == "POST":
-            raw = self.request.data.get("project")
+            # Non-object bodies (bare array/string/null) are rejected as
+            # 400 here — request.data.get would 500 on them.
+            raw = body_as_dict(self.request).get("project")
             if not raw:
                 return [IsAuthenticated()]
             try:
@@ -70,7 +73,7 @@ class AlertRuleListView(APIView):
         """The target org for the create permission: the org of the project
         picked in the request body (mirroring the create logic, so
         permission and view always agree)."""
-        raw = request.data.get("project")
+        raw = body_as_dict(request).get("project")
         if not raw:
             return None
         try:
@@ -139,7 +142,8 @@ class AlertRuleListView(APIView):
         },
     )
     def post(self, request):
-        raw_project_id = request.data.get("project")
+        data = body_as_dict(request)
+        raw_project_id = data.get("project")
         if raw_project_id is None:
             raise serializers.ValidationError(
                 {"project": "This field is required."}
@@ -156,7 +160,7 @@ class AlertRuleListView(APIView):
             raise NotFound(PROJECT_NOT_FOUND)
 
         serializer = AlertRuleInputSerializer(
-            data=request.data,
+            data=data,
             context={"organization_id": project.organization_id},
         )
         serializer.is_valid(raise_exception=True)
@@ -200,13 +204,14 @@ class AlertRuleDetailView(APIView):
 
         # project is write-only on the serializer for create; on update it
         # must stay absent so the rule can never be moved to another project.
-        if "project" in request.data:
+        data = body_as_dict(request)
+        if "project" in data:
             raise serializers.ValidationError(
                 {"project": "The project of an alert rule cannot be changed."}
             )
         serializer = AlertRuleInputSerializer(
             rule,
-            data=request.data,
+            data=data,
             partial=True,
             context={"organization_id": rule.project.organization_id},
         )

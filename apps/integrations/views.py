@@ -20,6 +20,7 @@ from apps.organizations.selectors import (
 )
 from apps.organizations.permissions import IsOrgOwnerOrAdmin
 
+from trazeiq_backend.requests import body_as_dict
 from trazeiq_backend.responses import api_error, api_success, envelope_schema
 
 from .models import SlackIntegration
@@ -48,7 +49,7 @@ class SlackConnectView(APIView):
         ``organization``, falling back to the caller's first org (mirroring
         project creation) so validation errors still surface as 400s for
         members."""
-        raw = request.data.get("organization")
+        raw = body_as_dict(request).get("organization")
         if raw:
             try:
                 return UUID(str(raw))
@@ -93,16 +94,17 @@ class SlackConnectView(APIView):
         },
     )
     def post(self, request):
+        data = body_as_dict(request)
         missing = {
             field: "This field is required."
             for field in ("organization", "code")
-            if request.data.get(field) is None
+            if data.get(field) is None
         }
         if missing:
             raise serializers.ValidationError(missing)
 
-        organization_id = request.data["organization"]
-        code = request.data["code"]
+        organization_id = data["organization"]
+        code = data["code"]
         try:
             organization = get_organization_for_user(
                 UUID(str(organization_id)), request.user
@@ -116,7 +118,7 @@ class SlackConnectView(APIView):
 
         try:
             token = exchange_oauth_code(
-                code, redirect_uri=request.data.get("redirect_uri")
+                code, redirect_uri=data.get("redirect_uri")
             )
         except SlackUnavailable:
             return api_error(

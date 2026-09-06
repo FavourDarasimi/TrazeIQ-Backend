@@ -196,3 +196,30 @@ class SlackStatusTests(TestCase):
         create_org(other, "BobCo")
         response = self.status(client=other)
         self.assertEqual(response.status_code, 404)
+
+class SlackConnectNonObjectBodyTests(TestCase):
+    """Regression: bare array/string/null JSON bodies must 400, never 500.
+
+    The connect endpoint resolves the org from the body inside
+    ``get_permission_org_id`` and indexes the body directly in post —
+    both crash on non-objects without the guard.
+    """
+
+    RAW_BODIES = ("[1,2]", '"hi"', "null", "400")
+
+    def setUp(self):
+        cache.clear()
+        self.owner = APIClient()
+        register_and_login(self.owner, "owner@trazeiq.io")
+        create_org(self.owner, "Acme")
+
+    def test_connect_rejects_non_object_bodies(self):
+        for raw in self.RAW_BODIES:
+            with self.subTest(body=raw):
+                response = self.owner.post(
+                    "/api/v1/integrations/slack/connect/",
+                    data=raw,
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertFalse(response.data["success"])

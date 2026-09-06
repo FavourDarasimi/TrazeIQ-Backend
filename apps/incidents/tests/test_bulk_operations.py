@@ -172,3 +172,37 @@ class BulkIncidentOperationsTests(IncidentSetupMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["data"]["updated_count"], 2)
         self.assertEqual(AlertLog.objects.count(), 0)
+
+
+class BulkNonObjectBodyTests(IncidentSetupMixin, TestCase):
+    """Regression: bare array/string/null JSON bodies must 400, never 500.
+
+    Every bulk endpoint reads ``request.data.get(...)`` first thing — on a
+    parsed list/str/None that raises AttributeError inside the handler.
+    This pins the 400 contract on all five bulk write paths.
+    """
+
+    BULK_URLS = [
+        "/api/v1/incidents/bulk-update/",
+        "/api/v1/incidents/bulk-resolve/",
+        "/api/v1/incidents/bulk-ignore/",
+        "/api/v1/incidents/bulk-assign/",
+        "/api/v1/incidents/bulk/",
+    ]
+    RAW_BODIES = ("[1,2]", '"hi"', "null", "400")
+
+    def setUp(self):
+        super().setUp()
+        self.add_event(message="Error 1", level="error")
+
+    def test_bulk_endpoints_reject_non_object_bodies(self):
+        for url in self.BULK_URLS:
+            for raw in self.RAW_BODIES:
+                with self.subTest(url=url, body=raw):
+                    response = self.client.post(
+                        url,
+                        data=raw,
+                        content_type="application/json",
+                    )
+                    self.assertEqual(response.status_code, 400)
+                    self.assertFalse(response.data["success"])

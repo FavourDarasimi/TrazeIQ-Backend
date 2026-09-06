@@ -17,6 +17,7 @@ from apps.alerts.services import enqueue_alert_evaluation
 from apps.auditlog.models import AuditAction
 from apps.auditlog.services import record_audit_log
 from apps.realtime.services import publish_incident_event
+from trazeiq_backend.requests import body_as_dict
 from trazeiq_backend.responses import api_success, envelope_schema
 
 from .models import Incident, TimelineEntry
@@ -512,7 +513,7 @@ class IncidentBulkUpdateView(APIView):
         },
     )
     def post(self, request):
-        valid_uuids = _parse_bulk_ids(request.data.get("incident_ids", []))
+        valid_uuids = _parse_bulk_ids(body_as_dict(request).get("incident_ids", []))
 
         incidents = list(get_updatable_incidents_for_user(valid_uuids, request.user))
         if not incidents:
@@ -593,7 +594,7 @@ class IncidentBulkResolveView(APIView):
         },
     )
     def post(self, request):
-        valid_uuids = _parse_bulk_ids(request.data.get("incident_ids", []))
+        valid_uuids = _parse_bulk_ids(body_as_dict(request).get("incident_ids", []))
 
         incidents = list(get_updatable_incidents_for_user(valid_uuids, request.user))
         if not incidents:
@@ -660,7 +661,7 @@ class IncidentBulkIgnoreView(APIView):
         },
     )
     def post(self, request):
-        valid_uuids = _parse_bulk_ids(request.data.get("incident_ids", []))
+        valid_uuids = _parse_bulk_ids(body_as_dict(request).get("incident_ids", []))
 
         incidents = list(get_updatable_incidents_for_user(valid_uuids, request.user))
         if not incidents:
@@ -725,7 +726,8 @@ class IncidentBulkAssignView(APIView):
         },
     )
     def post(self, request):
-        raw_ids = request.data.get("incident_ids", [])
+        data = body_as_dict(request)
+        raw_ids = data.get("incident_ids", [])
         valid_uuids = _parse_bulk_ids(raw_ids)
 
         incidents = list(get_updatable_incidents_for_user(valid_uuids, request.user))
@@ -736,7 +738,7 @@ class IncidentBulkAssignView(APIView):
 
         org_ids = {inc.project.organization_id for inc in incidents}
         serializer = BulkUpdateSerializer(
-            data={"incident_ids": raw_ids, "assigned_to": request.data.get("assigned_to")},
+            data={"incident_ids": raw_ids, "assigned_to": data.get("assigned_to")},
             context={"organization_ids": org_ids},
         )
         serializer.is_valid(raise_exception=True)
@@ -835,9 +837,10 @@ class IncidentBulkView(APIView):
         },
     )
     def post(self, request):
-        raw_ids = request.data.get("incident_ids")
+        data = body_as_dict(request)
+        raw_ids = data.get("incident_ids")
         if raw_ids is None:
-            raw_ids = request.data.get("ids", [])
+            raw_ids = data.get("ids", [])
         valid_uuids = _parse_bulk_ids(raw_ids)
 
         incidents = list(get_updatable_incidents_for_user(valid_uuids, request.user))
@@ -847,8 +850,8 @@ class IncidentBulkView(APIView):
             )
 
         # Normalize action -> status
-        action = request.data.get("action")
-        status_val = request.data.get("status")
+        action = data.get("action")
+        status_val = data.get("status")
         if action and not status_val:
             action_map = {
                 "resolve": Incident.Status.RESOLVED,
@@ -867,10 +870,10 @@ class IncidentBulkView(APIView):
         payload: dict = {"incident_ids": raw_ids}
         if status_val is not None:
             payload["status"] = status_val
-        if "severity" in request.data:
-            payload["severity"] = request.data["severity"]
-        if "assigned_to" in request.data:
-            payload["assigned_to"] = request.data["assigned_to"]
+        if "severity" in data:
+            payload["severity"] = data["severity"]
+        if "assigned_to" in data:
+            payload["assigned_to"] = data["assigned_to"]
 
         if not any(k in payload for k in ("status", "severity", "assigned_to")):
             raise serializers.ValidationError(

@@ -12,6 +12,7 @@ from apps.organizations.selectors import (
 
 from apps.auditlog.models import AuditAction
 from apps.auditlog.services import record_audit_log
+from trazeiq_backend.requests import body_as_dict
 from trazeiq_backend.responses import api_success, envelope_schema
 
 from .permissions import IsProjectOwnerOrAdmin
@@ -51,7 +52,7 @@ class ProjectListView(APIView):
         """The target org for the create permission: the body's organization,
         or the caller's first org — mirroring the default the create logic
         uses, so permission and view always agree."""
-        raw = request.data.get("organization")
+        raw = body_as_dict(request).get("organization")
         if raw:
             try:
                 return UUID(str(raw))

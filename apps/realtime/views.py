@@ -18,6 +18,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from apps.projects.selectors import get_project_for_user
+from trazeiq_backend.requests import body_as_dict
 from trazeiq_backend.responses import api_error, api_success, envelope_schema
 
 from .pusher import PusherUnavailable, authenticate_channel
@@ -62,8 +63,9 @@ class PusherAuthView(APIView):
         },
     )
     def post(self, request):
-        channel_name = request.data.get("channel_name")
-        socket_id = request.data.get("socket_id")
+        data = body_as_dict(request)
+        channel_name = data.get("channel_name")
+        socket_id = data.get("socket_id")
 
         missing = {
             field: ["This field is required."]

@@ -1,8 +1,9 @@
 from uuid import UUID
 
 from django.db.models import QuerySet
+from django.utils import timezone
 
-from .models import Membership, Organization
+from .models import Invite, Membership, Organization
 
 
 def list_organizations_for_user(user):
@@ -36,3 +37,14 @@ def list_members(organization) -> QuerySet[Membership]:
     return Membership.objects.filter(organization=organization).order_by(
         "created_at", "id"
     )
+
+
+def list_pending_invites(organization) -> QuerySet[Invite]:
+    """Outstanding invites for an org: never used and not yet expired,
+    newest first. The caller must already hold a manager role — invite
+    rows expose outsider email addresses, so viewers never see them."""
+    return Invite.objects.filter(
+        organization=organization,
+        used_at__isnull=True,
+        expires_at__gt=timezone.now(),
+    ).order_by("-created_at", "-id")

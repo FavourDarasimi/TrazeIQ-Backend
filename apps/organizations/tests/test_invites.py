@@ -219,3 +219,61 @@ class OrganizationMembersTests(TestCase):
         register_and_login(outsider, "outsider@trazeiq.io")
         response = outsider.get(f"/api/v1/organizations/{self.org_id}/members/")
         self.assertEqual(response.status_code, 404)
+
+
+class PendingInvitesListTests(TestCase):
+    """GET /api/v1/organizations/{id}/invites/ — outstanding invites only."""
+
+    def setUp(self):
+        cache.clear()
+        self.owner = APIClient()
+        register_and_login(self.owner, "owner@trazeiq.io")
+        self.org_id = create_org(self.owner, "Acme")
+
+        self.viewer = APIClient()
+        register_and_login(self.viewer, "viewer@trazeiq.io")
+        Membership.objects.create(
+            user=User.objects.get(email="viewer@trazeiq.io"),
+            organization_id=self.org_id,
+            role=MembershipRole.VIEWER,
+        )
+
+    def test_lists_pending_invites_newest_first(self):
+        invite(self.owner, self.org_id, "a@trazeiq.io")
+        invite(self.owner, self.org_id, "b@trazeiq.io")
+        response = self.owner.get(f"/api/v1/organizations/{self.org_id}/invites/")
+        self.assertEqual(response.status_code, 200)
+        rows = response.data["data"]["invites"]
+        self.assertEqual([r["email"] for r in rows], ["b@trazeiq.io", "a@trazeiq.io"])
+        # The raw token is never exposed by the list endpoint.
+        self.assertNotIn("invite_token", response.data["data"])
+        self.assertNotIn("token_hash", rows[0])
+
+    def test_used_and_expired_invites_are_excluded(self):
+        data = invite(self.owner, self.org_id, "gone@trazeiq.io")
+        stored = Invite.objects.get(email="gone@trazeiq.io")
+        stored.used_at = stored.created_at
+        stored.save(update_fields=["used_at"])
+
+        invite(self.owner, self.org_id, "stale@trazeiq.io")
+        stale = Invite.objects.get(email="stale@trazeiq.io")
+        stale.expires_at = stale.created_at
+        stale.save(update_fields=["expires_at"])
+        assert data["invite"]["id"]  # invite exists; only its state changed
+
+        response = self.owner.get(f"/api/v1/organizations/{self.org_id}/invites/")
+        self.assertEqual(response.data["data"]["invites"], [])
+
+    def test_viewer_is_forbidden_non_member_is_404(self):
+        invite(self.owner, self.org_id, "a@trazeiq.io")
+        response = self.viewer.get(
+            f"/api/v1/organizations/{self.org_id}/invites/"
+        )
+        self.assertEqual(response.status_code, 403)
+
+        outsider = APIClient()
+        register_and_login(outsider, "outsider@trazeiq.io")
+        response = outsider.get(
+            f"/api/v1/organizations/{self.org_id}/invites/"
+        )
+        self.assertEqual(response.status_code, 404)

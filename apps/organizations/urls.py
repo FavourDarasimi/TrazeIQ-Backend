@@ -22,4 +22,9 @@ urlpatterns = [
         views.OrganizationInviteView.as_view(),
         name="invite",
     ),
+    path(
+        "<uuid:pk>/invites/",
+        views.OrganizationInvitesView.as_view(),
+        name="invites",
+    ),
 ]

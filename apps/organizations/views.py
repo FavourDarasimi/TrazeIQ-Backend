@@ -16,6 +16,7 @@ from .selectors import (
     get_organization_for_user,
     list_members,
     list_organizations_for_user,
+    list_pending_invites,
 )
 from .serializers import (
     InviteInputSerializer,
@@ -171,6 +172,52 @@ class OrganizationMembersView(APIView):
                 "members": MembershipOutputSerializer(
                     members, many=True
                 ).data
+            }
+        )
+
+
+class OrganizationInvitesView(APIView):
+    """GET /api/organizations/{id}/invites/ — outstanding invites.
+
+    Owner/admin only: invite rows expose the email addresses of people who
+    are not members yet, so viewers never see them. Only unused, unexpired
+    invites are listed — the raw token is never returned here (it exists
+    exactly once, in the invite-creation response).
+    """
+
+    permission_classes = [IsAuthenticated, IsOrgOwnerOrAdmin]
+
+    @extend_schema(
+        tags=["organizations"],
+        operation_id="organizations_invites_list",
+        summary="List pending invites",
+        description=(
+            "Outstanding (unused, unexpired) invites for the organization, "
+            "newest first. Owner/admin only."
+        ),
+        responses={
+            200: envelope_schema(
+                "OrganizationInvitesOk",
+                payload=inline_serializer(
+                    "OrganizationInvitesData",
+                    fields={
+                        "invites": InviteOutputSerializer(many=True),
+                    },
+                ),
+            ),
+            401: envelope_schema("OrganizationInvitesUnauthorized", error=True),
+            403: envelope_schema("OrganizationInvitesForbidden", error=True),
+            404: envelope_schema("OrganizationInvitesNotFound", error=True),
+        },
+    )
+    def get(self, request, pk):
+        organization = get_organization_for_user(pk, request.user)
+        if organization is None:
+            raise NotFound(ORG_NOT_FOUND)
+        invites = list_pending_invites(organization)
+        return api_success(
+            data={
+                "invites": InviteOutputSerializer(invites, many=True).data
             }
         )
 

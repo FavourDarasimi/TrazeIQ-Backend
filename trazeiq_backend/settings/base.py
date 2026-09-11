@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "apps.analytics",
     "apps.auditlog",
     "apps.realtime",
+    "apps.platform",
 ]
 
 MIDDLEWARE = [
@@ -256,6 +257,14 @@ APP_BASE_URL = env("APP_BASE_URL", default="http://localhost:3000")
 # Outbound dispatch (webhook POSTs, Slack calls) must never hang the worker.
 DISPATCH_TIMEOUT_SECONDS = env.float("DISPATCH_TIMEOUT_SECONDS", default=5.0)
 
+# ---- Platform admin (staff-only monitoring) ----
+# Per-user throttle on /api/v1/admin/* (DRF ScopedRateThrottle scope
+# "platform_admin") plus the TTL on the cached overview aggregate.
+ADMIN_THROTTLE = env("ADMIN_THROTTLE", default="120/min")
+PLATFORM_ADMIN_CACHE_SECONDS = env.int(
+    "PLATFORM_ADMIN_CACHE_SECONDS", default=60
+)
+
 # ---- Django REST Framework ----
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
@@ -273,6 +282,10 @@ REST_FRAMEWORK = {
     # Every DRF-raised error becomes {success, message, error: {code, fields?}}.
     "EXCEPTION_HANDLER": "trazeiq_backend.responses.drf_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    # Scoped rates (each consumed only by views declaring the scope).
+    "DEFAULT_THROTTLE_RATES": {
+        "platform_admin": ADMIN_THROTTLE,
+    },
 }
 
 # ---- API documentation (Swagger / OpenAPI) ----

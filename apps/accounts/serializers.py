@@ -58,6 +58,9 @@ class UserOutputSerializer(serializers.Serializer):
     name = serializers.SerializerMethodField()
     email_verified = serializers.BooleanField(read_only=True)
     auth_provider = serializers.CharField(read_only=True)
+    # Drives the staff-gated Platform admin UI. Harmless to expose: it reveals
+    # no capability by itself — /api/v1/admin/* re-checks is_staff server-side.
+    is_staff = serializers.BooleanField(read_only=True)
 
     def get_name(self, obj) -> str:
         return obj.first_name or obj.email.split("@")[0]

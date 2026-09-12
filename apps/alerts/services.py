@@ -2,13 +2,13 @@
 
 The evaluation chain, all best-effort for the caller:
 
-    evaluate_alerts_for_incident (Celery task)
+    enqueue_alert_evaluation (this module, synchronous)
       -> evaluate_incident (this module)
            -> one AlertLog row per matched rule out of cooldown
 
-``enqueue_alert_evaluation`` is the fire-and-forget hook callers (ingestion,
-incident PATCH) use — a broker outage degrades to "no alerts" instead of
-failing the request, mirroring the Phase 2B AI enqueue contract.
+``enqueue_alert_evaluation`` is the hook callers (ingestion, incident PATCH)
+use — evaluation is cheap DB work plus best-effort dispatches, so it runs
+inline; any failure degrades to "no alerts" instead of failing the request.
 """
 
 import logging
@@ -43,8 +43,8 @@ def evaluate_incident(incident: Incident) -> int:
     Returns the number of dispatch attempts logged. Suppressed (in-cooldown)
     matches are skipped without logging; a failed delivery is still logged
     with ``status=failed`` and the error detail, so the AlertLog table stays
-    a faithful record of attempts. Dispatch never raises — the queue worker
-    must not die because a webhook is down.
+    a faithful record of attempts. Dispatch never raises — one bad webhook
+    must not take down the request.
     """
     from .dispatchers import dispatch
 
@@ -77,40 +77,32 @@ def evaluate_incident(incident: Incident) -> int:
 
 
 def enqueue_alert_evaluation(incident_id: UUID) -> None:
-    """Kick off alert evaluation without touching the request path.
+    """Evaluate the incident's alert rules synchronously.
 
-    Import is deferred so ``tasks`` (which imports this module) can import
-    it back without a cycle; a broker outage is swallowed+logged so
-    ingestion never 500s (same contract as the AI enqueue).
-
-    In DEBUG (dev) without a running Celery worker the delay() would queue
-    but never run, leaving AlertLogs at 0. For alerts (unlike AI) the
-    dispatch is cheap and safe to run inline, so DEBUG falls back to
-    synchronous evaluation after the async enqueue.
+    No worker queue: matching is cheap DB work and each dispatch is already
+    best-effort, so this runs inline in the request path. Never raises — any
+    failure is swallowed+logged so ingestion (and incident PATCH) never 500
+    because of alerts.
     """
-    from django.conf import settings
-
-    from .tasks import evaluate_alerts_for_incident
-
-    # In dev without a worker, run synchronously so the dashboard shows
-    # deliveries immediately (ingestion tests and local manual QA expect it).
-    # Production (DEBUG=False) stays fully async.
-    if getattr(settings, "DEBUG", False):
-        try:
-            incident = Incident.objects.get(pk=incident_id)
-            evaluate_incident(incident)
-            return
-        except Exception:
-            logger.exception(
-                "enqueue_alert_evaluation: sync fallback failed for %s",
-                incident_id,
-            )
-            return
-
     try:
-        evaluate_alerts_for_incident.delay(str(incident_id))
+        incident = Incident.objects.select_related("project").get(pk=incident_id)
+    except Incident.DoesNotExist:
+        logger.warning(
+            "enqueue_alert_evaluation: incident %s no longer exists",
+            incident_id,
+        )
+        return
+    try:
+        dispatches = evaluate_incident(incident)
     except Exception:
         logger.exception(
-            "enqueue_alert_evaluation: broker unavailable, incident %s",
+            "enqueue_alert_evaluation: evaluation failed for %s",
+            incident_id,
+        )
+        return
+    if dispatches:
+        logger.info(
+            "enqueue_alert_evaluation: %s dispatch(es) for incident %s",
+            dispatches,
             incident_id,
         )

@@ -15,7 +15,6 @@ def merge_duplicate_open_incidents(apps, schema_editor):
     """
     Incident = apps.get_model("incidents", "Incident")
     TimelineEntry = apps.get_model("incidents", "TimelineEntry")
-    AIAnalysis = apps.get_model("ai", "AIAnalysis")
 
     dup_group_ids = (
         Incident.objects.filter(status="open")
@@ -35,29 +34,12 @@ def merge_duplicate_open_incidents(apps, schema_editor):
         TimelineEntry.objects.filter(incident_id__in=extra_ids).update(
             incident_id=keeper.id
         )
-        keeper_has_pending = AIAnalysis.objects.filter(
-            incident_id=keeper.id, status="pending"
-        ).exists()
-        for analysis in AIAnalysis.objects.filter(
-            incident_id__in=extra_ids
-        ).order_by("created_at", "id"):
-            # The partial unique allows one pending row per incident — a
-            # conflicting extra pending row is dropped (it represents an
-            # in-flight task, never a completed analysis).
-            if analysis.status == "pending" and keeper_has_pending:
-                analysis.delete()
-            else:
-                analysis.incident_id = keeper.id
-                analysis.save(update_fields=["incident"])
-                if analysis.status == "pending":
-                    keeper_has_pending = True
         Incident.objects.filter(id__in=extra_ids).delete()
 
 
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("ai", "0001_initial"),
         ("events", "0002_event_breadcrumbs"),
         ("incidents", "0001_initial"),
         ("projects", "0002_project_events_per_minute"),

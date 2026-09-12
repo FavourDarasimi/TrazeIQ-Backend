@@ -2,7 +2,6 @@ from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import F
 from django.utils import timezone
 
-from apps.ai.services import enqueue_analysis_if_needed
 from apps.alerts.services import enqueue_alert_evaluation
 from apps.incidents.models import Incident
 from apps.realtime.services import publish_incident_event
@@ -127,9 +126,9 @@ def ingest_event(
          count/last_seen,
       4. reuse the open Incident for that group (create one if none),
       5. always persist the raw Event,
-      6. decide + enqueue AI analysis (new incident or stale analysis only) —
-          async via Celery, never inline (Agent.md rule 1: the ingestion
-          request must respond in milliseconds regardless of the LLM).
+      6. decide + run AI analysis inline (new incident or stale analysis
+          only) — no worker queue, so a slow model call delays the ingestion
+          response; an analysis failure never fails the request.
     """
     # Phase 5E: structured ingest-latency logging for observability. Timing
     # only — it never changes control flow and never fails the request.
@@ -172,10 +171,6 @@ def ingest_event(
         fingerprint=fp,
     )
 
-    # Spec §6 steps 8–9: enqueue analysis only for a brand-new incident or a
-    # stale analysis — never inline, and never allowed to fail the request.
-    enqueue_analysis_if_needed(incident_id=incident.pk, is_new=_created)
-
     # Phase 3A: push the incident lifecycle event live. Best-effort — a
     # misconfigured/unreachable Pusher must not fail the ingestion request.
     publish_incident_event(
@@ -184,7 +179,7 @@ def ingest_event(
         event=event,
     )
 
-    # Phase 4C: alert evaluation runs async from the same point where the
+    # Phase 4C: alert evaluation runs inline from the same point where the
     # lifecycle event fires; cooldown enforcement prevents alert storms.
     # Best-effort like the pusher call — never allowed to fail ingestion.
     enqueue_alert_evaluation(incident.pk)

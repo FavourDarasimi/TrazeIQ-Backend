@@ -28,20 +28,6 @@ def incident_link(incident) -> str:
     return f"{base}/incidents/{incident.id}"
 
 
-def _root_cause(incident) -> str | None:
-    """The latest ready AI root cause, if one exists yet."""
-    from apps.ai.models import AIAnalysis
-
-    return (
-        AIAnalysis.objects.filter(
-            incident=incident, status=AIAnalysis.Status.READY
-        )
-        .order_by("-created_at")
-        .values_list("root_cause", flat=True)
-        .first()
-    )
-
-
 def _summary_payload(incident) -> dict:
     """The incident facts every channel renders (title, severity, link…)."""
     return {
@@ -49,7 +35,6 @@ def _summary_payload(incident) -> dict:
         "severity": incident.severity,
         "status": incident.status,
         "link": incident_link(incident),
-        "root_cause": _root_cause(incident),
         "occurrences": incident.error_group.count,
     }
 
@@ -90,9 +75,6 @@ def _dispatch_email(rule, incident) -> None:
         f"Status: {payload['status']}",
         f"Occurrences: {payload['occurrences']}",
         "",
-        "Root cause: "
-        + (payload["root_cause"] or "AI analysis pending"),
-        "",
         f"View incident: {payload['link']}",
     ]
     send_mail(subject, "\n".join(lines), None, [rule.target])
@@ -100,11 +82,9 @@ def _dispatch_email(rule, incident) -> None:
 
 def _slack_text_payload(payload: dict) -> dict:
     """Slack message body — both chat.postMessage and webhooks accept it."""
-    cause = payload["root_cause"] or "AI analysis pending"
     text = (
         f"*{payload['severity'].title()} incident:* {payload['title']}\n"
-        f"Status: *{payload['status']}* · Occurrences: {payload['occurrences']} · "
-        f"Root cause: {cause}\n{payload['link']}"
+        f"Status: *{payload['status']}* · Occurrences: {payload['occurrences']}\n{payload['link']}"
     )
     return {
         "text": text,
@@ -125,8 +105,7 @@ def _slack_text_payload(payload: dict) -> dict:
                     "type": "mrkdwn",
                     "text": (
                         f"Status: *{payload['status']}* · "
-                        f"Occurrences: {payload['occurrences']}\n"
-                        f"Root cause: {cause}\n{payload['link']}"
+                        f"Occurrences: {payload['occurrences']}\n{payload['link']}"
                     ),
                 },
             },

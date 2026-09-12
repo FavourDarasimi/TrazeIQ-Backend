@@ -17,7 +17,6 @@ from django.db.models import Count, Q
 from django.utils import timezone
 
 from apps.accounts.models import User
-from apps.ai.models import AIAnalysis
 from apps.alerts.models import AlertLog
 from apps.auditlog.models import AuditLog
 from apps.events.models import Event
@@ -39,11 +38,6 @@ def platform_totals() -> dict:
         .annotate(n=Count("id"))
         .values_list("severity", "n")
     )
-    ai_rows = (
-        AIAnalysis.objects.filter(created_at__gte=day_ago)
-        .values("status")
-        .annotate(n=Count("id"))
-    )
     return {
         "users": User.objects.count(),
         "organizations": Organization.objects.count(),
@@ -54,9 +48,7 @@ def platform_totals() -> dict:
             severity: open_by_severity.get(severity, 0)
             for severity in SEVERITIES
         },
-        "ai_24h": {
-            row["status"]: row["n"] for row in ai_rows
-        },
+        "ai_24h": {},
         "alerts_24h": AlertLog.objects.filter(
             dispatched_at__gte=day_ago
         ).count(),

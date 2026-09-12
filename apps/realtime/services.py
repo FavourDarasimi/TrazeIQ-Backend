@@ -61,31 +61,4 @@ def publish_incident_event(
 
 
 def publish_analysis_ready(incident_id: UUID) -> bool:
-    """Publish ``ai_analysis.ready`` once the Celery task finishes an analysis.
-
-    Loads the incident itself so the payload is self-contained — the client
-    can drop the pushed analysis straight into its cache without a refetch."""
-    try:
-        incident = Incident.objects.select_related("error_group").get(pk=incident_id)
-    except Incident.DoesNotExist:
-        logger.warning("publish_analysis_ready: incident %s no longer exists", incident_id)
-        return False
-    from apps.ai.models import AIAnalysis
-
-    analysis = (
-        AIAnalysis.objects.filter(incident=incident)
-        .order_by("-created_at", "-id")
-        .first()
-    )
-    from apps.ai.serializers import AIAnalysisOutputSerializer
-
-    return pusher.publish(
-        project_channel(incident.project_id),
-        "ai_analysis.ready",
-        {
-            "incident": _incident_payload(incident),
-            "analysis": (
-                AIAnalysisOutputSerializer(analysis).data if analysis else None
-            ),
-        },
-    )
+    return False

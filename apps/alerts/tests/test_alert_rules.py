@@ -2,7 +2,7 @@
 
 DoD: a ``severity=critical`` rule + critical incident → exactly one dispatch
 even with more occurrences in the cooldown window; the cooldown expiring re-
-triggers a dispatch; evaluation runs async and never blocks ingestion.
+triggers a dispatch; evaluation runs inline and never blocks ingestion.
 """
 
 from datetime import timedelta
@@ -10,7 +10,7 @@ from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 from uuid import uuid4
@@ -20,8 +20,7 @@ from apps.incidents.models import Incident
 from apps.organizations.models import Membership
 
 from ..models import AlertLog, AlertRule
-from ..services import evaluate_incident
-from ..tasks import evaluate_alerts_for_incident
+from ..services import enqueue_alert_evaluation, evaluate_incident
 
 User = get_user_model()
 
@@ -323,32 +322,29 @@ class EvaluationTests(AlertSetupMixin):
         evaluate_incident(self._incident())
         self.assertEqual(AlertLog.objects.count(), 2)
 
-    def test_task_uses_service_and_tolerates_missing_incident(self):
-        evaluate_alerts_for_incident(str(self.incident_id))
-        evaluate_alerts_for_incident(str(uuid4()))  # no crash
+    def test_entrypoint_uses_service_and_tolerates_missing_incident(self):
+        enqueue_alert_evaluation(self.incident_id)
+        enqueue_alert_evaluation(uuid4())  # no crash
 
 
 class IngestionTriggerTests(AlertSetupMixin):
-    def test_broker_outage_never_blocks_ingestion(self):
+    def test_evaluation_failure_never_blocks_ingestion(self):
         response = self.add_event(level="fatal")
         self.assertEqual(response.status_code, 201)
 
         with mock.patch(
-            "apps.alerts.tasks.evaluate_alerts_for_incident.delay",
-            side_effect=Exception("broker down"),
+            "apps.alerts.services.evaluate_incident",
+            side_effect=Exception("dispatch exploded"),
         ):
             response = self.add_event(level="fatal")
         self.assertEqual(response.status_code, 201)
 
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
-    @mock.patch("apps.events.services.enqueue_analysis_if_needed")
-    def test_ingestion_eagerly_evaluates_and_dispatches(self, _analysis):
+    def test_ingestion_evaluates_and_dispatches_inline(self):
         self.create_rule(condition={"severity": "critical"})
         response = self.add_event(level="fatal")
         self.assertEqual(response.status_code, 201)
         self.assertEqual(AlertLog.objects.count(), 1)
 
-    @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
     def test_patch_trigger_evaluates_rules(self):
         self.create_rule(condition={"severity": "high"})
         Incident.objects.filter(pk=self.incident_id).update(severity="medium")

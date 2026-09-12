@@ -1,7 +1,5 @@
 from django.urls import path
 
-from apps.ai.views import IncidentAnalysisView, IncidentAnalyzeView
-
 from .views import (
     IncidentBulkAssignView,
     IncidentBulkIgnoreView,
@@ -52,16 +50,6 @@ urlpatterns = [
         "<uuid:incident_id>/comments/",
         IncidentCommentView.as_view(),
         name="incident-comments",
-    ),
-    path(
-        "<uuid:incident_id>/analyze/",
-        IncidentAnalyzeView.as_view(),
-        name="incident-analyze",
-    ),
-    path(
-        "<uuid:incident_id>/analysis/",
-        IncidentAnalysisView.as_view(),
-        name="incident-analysis",
     ),
     path(
         "<uuid:incident_id>/resolve/",

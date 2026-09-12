@@ -1,8 +1,8 @@
 """Phase 5E — expanded health probe: dependency checks + pipeline metrics.
 
-The probe must never fail: a down dependency degrades the payload, and the
-worker check must not raise when no worker is running (the suite runs
-without one).
+The probe must never fail: a down dependency degrades the payload. No
+worker exists anymore (analysis and alerts run inline), so the probe only
+checks database and cache.
 """
 
 from django.test import TestCase
@@ -18,31 +18,20 @@ class HealthProbeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.data["data"]
         self.assertEqual(data["status"], "ok")
-        for name in ("database", "cache", "worker"):
+        for name in ("database", "cache"):
             self.assertIn(name, data["checks"])
             self.assertIn(
                 data["checks"][name]["status"], ("ok", "unavailable")
             )
         self.assertEqual(data["checks"]["database"]["status"], "ok")
         self.assertEqual(data["checks"]["cache"]["status"], "ok")
-
-    def test_worker_check_degrades_without_a_worker(self):
-        # No Celery worker runs in the suite — the check must report
-        # unavailable, not raise or fail the probe.
-        response = self.client.get("/api/v1/health/")
-        self.assertEqual(response.status_code, 200)
-        worker = response.data["data"]["checks"]["worker"]
-        self.assertIn(worker["status"], ("ok", "unavailable"))
+        self.assertNotIn("worker", data["checks"])
 
     def test_includes_pipeline_metrics(self):
         response = self.client.get("/api/v1/health/")
         metrics = response.data["data"]["metrics"]
         self.assertIn("events_24h", metrics)
-        self.assertIn("ai_analysis", metrics)
         self.assertIn("alerts_24h", metrics)
-        self.assertEqual(
-            set(metrics["ai_analysis"]), {"pending", "ready", "failed"}
-        )
 
     def test_unversioned_alias_matches(self):
         versioned = self.client.get("/api/v1/health/")

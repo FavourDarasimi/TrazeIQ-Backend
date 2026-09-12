@@ -15,7 +15,6 @@ from trazeiq_backend.responses import api_success, envelope_schema
 from trazeiq_backend.views import (
     _check_cache,
     _check_database,
-    _check_worker,
     _pipeline_metrics,
 )
 
@@ -262,9 +261,9 @@ class PlatformProjectListView(PlatformAdminMixin):
 class PlatformHealthView(PlatformAdminMixin):
     """GET /api/v1/admin/health/ — dependency checks + pipeline metrics.
 
-    Same probes as the public ``/api/health/`` (database, cache, Celery
-    worker — always reported, never failing the response), plus the 24h
-    pipeline snapshot operators triage from.
+    Same probes as the public ``/api/health/`` (database, cache — always
+    reported, never failing the response), plus the 24h pipeline snapshot
+    operators triage from.
     """
 
     @extend_schema(
@@ -272,8 +271,8 @@ class PlatformHealthView(PlatformAdminMixin):
         operation_id="platform_health",
         summary="Platform health",
         description=(
-            "Dependency statuses (database, cache, worker) with latency plus "
-            "24h ingest/AI/alert metrics. Always HTTP 200 — read ``status``."
+            "Dependency statuses (database, cache) with latency plus 24h "
+            "ingest/AI/alert metrics. Always HTTP 200 — read ``status``."
         ),
         responses={
             200: envelope_schema(
@@ -292,7 +291,6 @@ class PlatformHealthView(PlatformAdminMixin):
         checks = {
             "database": _check_database(),
             "cache": _check_cache(),
-            "worker": _check_worker(),
         }
         try:
             metrics: dict = _pipeline_metrics()

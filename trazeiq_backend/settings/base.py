@@ -44,7 +44,6 @@ INSTALLED_APPS = [
     "apps.projects",
     "apps.events",
     "apps.incidents",
-    "apps.ai",
     "apps.alerts",
     "apps.integrations",
     "apps.notifications",
@@ -57,6 +56,10 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # Serves STATIC_ROOT (admin assets, drf-spectacular) directly from the
+    # app container — no separate static host or CDN required. Harmless in
+    # dev; prod compresses + fingerprints via STATICFILES_STORAGE (prod.py).
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -195,36 +198,13 @@ GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID", default="")
 # token's hash is stored (Agent.md rule 4); the raw token is shown once.
 INVITE_TTL_MINUTES = env.int("INVITE_TTL_MINUTES", default=60 * 24 * 7)
 
-# ---- OpenRouter / AI analysis (Phase 2B) ----
-# Empty API key means analysis fails gracefully with status=failed (no retry
-# storm) until a real key is configured. Base URL is the OpenRouter API root.
-OPENROUTER_API_KEY = env("OPENROUTER_API_KEY", default="")
-OPENROUTER_BASE_URL = env(
-    "OPENROUTER_BASE_URL", default="https://openrouter.ai/api/v1"
-)
-# Ordered fallback chain tried on 429/error. Verified against OpenRouter's live
-# model list Aug 2026 — the original spec's `qwen/qwen3-30b-a3b:free` was
-# delisted; the free lineup rotates weekly, so re-check before shipping.
-OPENROUTER_MODELS = env.list(
-    "OPENROUTER_MODELS",
-    default=[
-        "openai/gpt-oss-20b:free",
-        "deepseek/deepseek-r1:free",
-        "openrouter/free",
-    ],
-)
-OPENROUTER_TIMEOUT_SECONDS = env.int("OPENROUTER_TIMEOUT_SECONDS", default=90)
-
-# Analysis caching window: repeats of an already-analyzed incident are not
-# re-analyzed while the latest analysis is younger than this (spec §7 — this
-# is what keeps us inside OpenRouter's free-tier rate limits).
-AI_ANALYSIS_CACHE_HOURS = env.int("AI_ANALYSIS_CACHE_HOURS", default=6)
 # The prompt is built from redacted, truncated error content so a giant
 # stacktrace can't blow the model's context window.
 AI_PROMPT_MAX_CHARS = env.int("AI_PROMPT_MAX_CHARS", default=20_000)
-# 429 backoff: countdown = base * 2 ** attempt, capped by max retries.
+# Backoff helper (apps.ai.services.retry_countdown): countdown = base * 2 **
+# attempt. No automatic retries run without a worker — a failed analysis is
+# retried on the incident's next occurrence via the cache rule instead.
 AI_RETRY_BASE_SECONDS = env.int("AI_RETRY_BASE_SECONDS", default=60)
-AI_RETRY_MAX_ATTEMPTS = env.int("AI_RETRY_MAX_ATTEMPTS", default=5)
 
 # ---- Pusher realtime (Phase 3A) ----
 # Empty app id/key/secret → publishing is a no-op (dev-safe). The secret is
@@ -366,32 +346,10 @@ LOGGING = {
     },
 }
 
-# ---- Celery (async jobs) ----
-# Redis-backed broker/result backend. The worker process is started with
-# `celery -A trazeiq_backend worker`; docker-compose runs Redis + Django + the
-# worker together for local development. Nothing in the ingestion hot path may
-# call a Celery task synchronously (Agent.md rule 1) — .delay() only.
-from kombu import Queue  # noqa: E402
-
-CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://localhost:6379/0")
-CELERY_RESULT_BACKEND = env(
-    "CELERY_RESULT_BACKEND", default="redis://localhost:6379/1"
-)
-# Celery 5.3+ stops retrying broker connections at startup by default; keep the
-# worker waiting for Redis instead of dying on a brief startup race.
-CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
-CELERY_TASK_DEFAULT_QUEUE = "default"
-CELERY_TASK_QUEUES = (
-    Queue("default"),
-    # Dedicated queue for OpenRouter analysis jobs. Kept separate from the
-    # default queue so a burst of analysis jobs can't starve lighter tasks,
-    # and rate-limited to stay under OpenRouter's ~20 requests/minute free
-    # ceiling (see Project_Overview.md §7).
-    Queue("ai_analysis"),
-)
-# Every task under apps/ai lands on the rate-limited AI queue. The glob covers
-# Phase 2B's `analyze_incident` (and any future ai-app tasks) without needing a
-# new route entry per task.
-CELERY_TASK_ROUTES = {
-    "apps.ai.tasks.*": {"queue": "ai_analysis", "rate_limit": "15/m"},
-}
+# ---- Background jobs ----
+# Removed: this project used to run AI analysis and alert dispatch on a
+# Celery worker (Redis broker). Single-process hosting plans don't allow a
+# worker process, so everything now runs synchronously in the request path
+# (see apps.ai.services.run_analysis_sync and
+# apps.alerts.services.enqueue_alert_evaluation). No CELERY_* settings remain.
+# Redis is still optional for the Django cache via DJANGO_REDIS_URL.

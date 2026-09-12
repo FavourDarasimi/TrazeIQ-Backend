@@ -30,6 +30,15 @@ DATABASES = {
     }
 }
 
+# Static files — compressed + content-hashed by WhiteNoise, served straight
+# from STATIC_ROOT. Requires `collectstatic` at build/release (see DEPLOY.md).
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    },
+}
+
 # Email — falls back to the console backend until a real SMTP provider is set.
 EMAIL_BACKEND = env(
     "EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend"

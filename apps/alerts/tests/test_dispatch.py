@@ -57,7 +57,6 @@ class EmailDispatchTests(AlertSetupMixin, TestCase):
         self.assertIn("critical", message.body)
         self.assertIn("incident", message.body)
         self.assertIn("http://localhost:3000/incidents/", message.body)
-        self.assertIn("AI analysis pending", message.body)
 
     @override_settings(
         EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
@@ -100,7 +99,6 @@ class WebhookDispatchTests(AlertSetupMixin, TestCase):
         self.assertEqual(sent["title"], "boom")
         self.assertEqual(sent["severity"], "critical")
         self.assertIn("incidents/", sent["link"])
-        self.assertIsNone(sent["root_cause"])  # no analysis yet
 
     def test_failed_webhook_is_logged_not_raised(self):
         rule = _rule(self.project_id, channel="webhook", target="https://hooks.example/h")

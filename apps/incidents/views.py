@@ -302,7 +302,7 @@ class IncidentDetailView(APIView):
         incident = update_incident(incident, actor=request.user, **updates)
         publish_incident_event(incident, event_name="incident.updated")
         # Phase 4C: a PATCH may have changed severity/status — re-evaluate
-        # alert rules async (cooldown dedups the repeats). Best-effort.
+        # alert rules inline (cooldown dedups the repeats). Best-effort.
         enqueue_alert_evaluation(incident.pk)
 
         events = latest_events_by_id([incident])

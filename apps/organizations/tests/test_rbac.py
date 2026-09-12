@@ -72,11 +72,6 @@ class ViewerReadOnlyTests(RbacSetupMixin):
         )
         self.assertEqual(timeline.status_code, 200)
 
-        analysis = self.roles["viewer"].get(
-            f"/api/v1/incidents/{self.incident_id}/analysis/"
-        )
-        self.assertEqual(analysis.status_code, 404)  # no analysis yet, but no 403
-
     def test_viewer_cannot_patch_incident(self):
         response = self.roles["viewer"].patch(
             f"/api/v1/incidents/{self.incident_id}/",
@@ -88,12 +83,6 @@ class ViewerReadOnlyTests(RbacSetupMixin):
     def test_viewer_cannot_resolve_incident(self):
         response = self.roles["viewer"].post(
             f"/api/v1/incidents/{self.incident_id}/resolve/", format="json"
-        )
-        self.assert_denied(response)
-
-    def test_viewer_cannot_trigger_analysis(self):
-        response = self.roles["viewer"].post(
-            f"/api/v1/incidents/{self.incident_id}/analyze/", format="json"
         )
         self.assert_denied(response)
 

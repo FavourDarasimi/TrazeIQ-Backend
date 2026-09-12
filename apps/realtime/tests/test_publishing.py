@@ -20,8 +20,6 @@ from apps.incidents.models import Incident
 from apps.organizations.models import Membership, MembershipRole, Organization
 from apps.projects.models import Project
 
-from apps.ai.models import AIAnalysis
-
 PASSWORD = "Password123!"
 
 
@@ -69,26 +67,6 @@ class PusherPublishingTestCase(TestCase):
             get_pusher.return_value = client
             event = ingest_event(self.project, message="Should not raise")
         self.assertIsNotNone(event.id)
-
-    def test_analysis_ready_fires_after_successful_run(self):
-        event = ingest_event(self.project, message="Slow query detected")
-        incident = Incident.objects.get(error_group__events=event)
-        analysis = AIAnalysis.objects.create(
-            incident=incident, status=AIAnalysis.Status.READY, confidence="high",
-            root_cause="Index missing", suggested_fix="Add an index",
-            model_used="openai/gpt-oss-20b:free",
-        )
-        with override_settings(OPENROUTER_API_KEY="test-key"):
-            with patch("apps.ai.tasks.run_analysis", return_value=analysis):
-                with patch("apps.realtime.pusher.publish", return_value=True) as publish:
-                    from apps.ai.tasks import analyze_incident
-                    analyze_incident(str(incident.id))
-        publish.assert_called_once()
-        channel, event_name, payload = publish.call_args.args
-        self.assertEqual(channel, f"private-project-{self.project.id}")
-        self.assertEqual(event_name, "ai_analysis.ready")
-        self.assertEqual(payload["analysis"]["id"], str(analysis.id))
-        self.assertEqual(payload["incident"]["id"], str(incident.id))
 
     @patch("apps.realtime.pusher.publish", return_value=True)
     def test_resolve_publishes_resolved_and_flips_status(self, publish):

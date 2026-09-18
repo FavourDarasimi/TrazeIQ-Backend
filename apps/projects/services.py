@@ -46,14 +46,22 @@ def delete_project(project: Project) -> None:
     project.delete()
 
 
-def integration_snippet(raw_key: str, environment: str) -> str:
+def integration_snippet(
+    raw_key: str, environment: str, base_url: str = "https://api.trazeiq.io"
+) -> str:
     """Copy-paste direct HTTP snippet shown next to the raw key, once.
 
     The integration surface is a plain HTTPS POST — no packaged SDK is
     shipped (see Backend-Phases.md); this snippet is the whole integration.
+
+    ``base_url`` must be the API host the caller reached (scheme + host, no
+    trailing slash) — never a hardcoded prod host. In local evaluation the
+    view passes ``request.scheme://request.get_host()`` so copying the
+    snippet during dev posts to the dev server, not production.
     """
+    base = base_url.rstrip("/")
     return (
-        "curl -X POST https://api.trazeiq.io/api/v1/events/ \\\n"
+        f"curl -X POST {base}/api/v1/events/ \\\n"
         '  -H "Content-Type: application/json" \\\n'
         f'  -H "X-API-Key: {raw_key}" \\\n'
         '  -d \'{"environment": "%s", "message": "Hello TrazeIQ"}\'' % environment

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Event
+from .models import ErrorGroup, Event
 from .validators import validate_payload_size
 
 
@@ -60,5 +60,25 @@ class EventOutputSerializer(serializers.ModelSerializer):
             "breadcrumbs",
             "fingerprint",
             "created_at",
+        ]
+        read_only_fields = fields
+
+
+class ErrorGroupOutputSerializer(serializers.ModelSerializer):
+    """Deduplicated error signature — the fact about the codebase behind
+    one or more incidents."""
+
+    project = serializers.UUIDField(source="project_id", read_only=True)
+
+    class Meta:
+        model = ErrorGroup
+        fields = [
+            "id",
+            "project",
+            "fingerprint",
+            "title",
+            "count",
+            "first_seen",
+            "last_seen",
         ]
         read_only_fields = fields

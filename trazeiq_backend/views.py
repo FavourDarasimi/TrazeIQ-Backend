@@ -1,7 +1,7 @@
 """Health check endpoint for monitoring TrazeIQ itself.
 
-Phase 5E: beyond liveness, this reports dependency checks (database, cache)
-and pipeline metrics (ingest volume, AI analysis outcomes, alert delivery)
+Phase 5E: beyond liveness, this reports dependency checks (database, cache,
+email delivery) and pipeline metrics (ingest volume, alert delivery)
 so TrazeIQ's own degradation is visible before customers notice missing
 analyses. Every check is best-effort and timed — a down dependency degrades
 the payload, never the probe itself (always HTTP 200).
@@ -22,6 +22,21 @@ from rest_framework.permissions import AllowAny
 from trazeiq_backend.responses import api_success, envelope_schema
 
 logger = logging.getLogger(__name__)
+
+
+def not_found(request, exception=None):
+    """JSON 404 for unmounted URLs — same envelope as every other API error.
+
+    Django serves HTML for unknown paths by default; API clients (and the
+    dashboard) expect ``{success: false, error: {code: NOT_FOUND}}``. Only
+    active when ``DEBUG=False`` (Django shows the technical page in dev).
+    """
+    from django.http import JsonResponse
+
+    return JsonResponse(
+        {"success": False, "message": "Not found.", "error": {"code": "NOT_FOUND"}},
+        status=404,
+    )
 
 
 def _timed(label, fn) -> dict:
@@ -61,6 +76,24 @@ def _check_cache() -> dict:
     return _timed("cache", probe)
 
 
+def _check_email() -> dict:
+    """Whether outbound mail can deliver anywhere (console/dummy → not).
+
+    Informational only: dev always reports ``unconfigured`` (console
+    backend + OTP bypass is the intended dev workflow), so this never
+    affects the overall probe status — but monitoring can alert on
+    ``checks.email.status`` before users discover signup/alerts are dead.
+    """
+    from trazeiq_backend.emailing import email_configured
+
+    if email_configured():
+        return {"status": "ok"}
+    return {
+        "status": "unconfigured",
+        "detail": "EMAIL_BACKEND never delivers; set EMAIL_HOST / SMTP.",
+    }
+
+
 def _pipeline_metrics() -> dict:
     """Cheap aggregate snapshot of pipeline health (2 indexed queries)."""
     from apps.alerts.models import AlertLog
@@ -84,8 +117,8 @@ def _pipeline_metrics() -> dict:
     tags=["system"],
     summary="Health check",
     description=(
-        "Liveness plus dependency checks (database, cache) and pipeline "
-        "metrics (24h ingest volume, AI analysis outcomes, alert delivery). "
+        "Liveness plus dependency checks (database, cache, email delivery) "
+        "and pipeline metrics (24h ingest volume, alert delivery). "
         "Always HTTP 200 — read ``status`` (ok/degraded) and the per-check "
         "``status`` fields for readiness."
     ),
@@ -109,6 +142,7 @@ def health(request):
     checks = {
         "database": _check_database(),
         "cache": _check_cache(),
+        "email": _check_email(),
     }
     try:
         metrics: dict = _pipeline_metrics()

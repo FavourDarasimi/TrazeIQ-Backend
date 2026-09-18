@@ -9,7 +9,9 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
-from trazeiq_backend.views import health
+from trazeiq_backend.views import health, not_found
+
+handler404 = "trazeiq_backend.views.not_found"
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -20,6 +22,7 @@ urlpatterns = [
     path("api/v1/invites/", include("apps.organizations.invite_urls")),
     path("api/v1/projects/", include("apps.projects.urls")),
     path("api/v1/events/", include("apps.events.urls")),
+    path("api/v1/error-groups/", include("apps.events.error_group_urls")),
     path("api/v1/incidents/", include("apps.incidents.urls")),
     path("api/v1/alerts/", include("apps.alerts.urls")),
     path("api/v1/integrations/", include("apps.integrations.urls")),

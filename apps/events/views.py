@@ -10,8 +10,17 @@ from trazeiq_backend.responses import api_success, api_error, envelope_schema
 
 from .authentication import APIKeyAuthentication
 from .permissions import IsAPIKeyAuthenticated
-from .serializers import EventInputSerializer, EventOutputSerializer
-from .selectors import get_event_for_user, list_events_for_user, parse_date_filter
+from .serializers import (
+    ErrorGroupOutputSerializer,
+    EventInputSerializer,
+    EventOutputSerializer,
+)
+from .selectors import (
+    get_event_for_user,
+    list_error_groups_for_user,
+    list_events_for_user,
+    parse_date_filter,
+)
 from .services import ingest_event
 from .throttles import EventPerKeyRateThrottle, EventPerIpRateThrottle
 
@@ -220,3 +229,63 @@ class EventDetailView(APIView):
         if event is None:
             raise NotFound(EVENT_NOT_FOUND)
         return api_success(data={"event": EventOutputSerializer(event).data})
+
+
+class ErrorGroupListView(APIView):
+    """GET /api/v1/error-groups/ — deduplicated error signatures.
+
+    JWT auth, membership-scoped (Agent.md rule 2). Optional ``?project=``
+    narrows to one project; unknown/foreign ids resolve to an empty list,
+    never another tenant's data.
+    """
+
+    @extend_schema(
+        tags=["events"],
+        operation_id="error_groups_list",
+        summary="List error groups",
+        description=(
+            "Deduplicated error signatures (fingerprint, occurrence count, "
+            "first/last seen) from every project in the caller's "
+            "organizations, most recently-seen first. Filter by project."
+        ),
+        parameters=[
+            inline_serializer(
+                "ErrorGroupListQuery",
+                fields={
+                    "project": serializers.UUIDField(required=False),
+                },
+            )
+        ],
+        responses={
+            200: envelope_schema(
+                "ErrorGroupListOk",
+                payload=inline_serializer(
+                    "ErrorGroupListData",
+                    fields={
+                        "error_groups": ErrorGroupOutputSerializer(many=True)
+                    },
+                ),
+            ),
+            400: envelope_schema("ErrorGroupListValidation", error=True),
+            401: envelope_schema("ErrorGroupListUnauthorized", error=True),
+        },
+    )
+    def get(self, request):
+        project_id = request.query_params.get("project")
+        if project_id is not None:
+            try:
+                project_id = UUID(project_id)
+            except (TypeError, ValueError, AttributeError):
+                raise serializers.ValidationError(
+                    {"project": "Must be a valid UUID."}
+                )
+        groups = list_error_groups_for_user(
+            request.user, project_id=project_id
+        )
+        return api_success(
+            data={
+                "error_groups": ErrorGroupOutputSerializer(
+                    groups, many=True
+                ).data
+            }
+        )

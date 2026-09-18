@@ -96,7 +96,9 @@ class ProjectListView(APIView):
         description=(
             "Generates a fresh API key, stores only its hash, and returns "
             "the raw key together with a copy-paste direct HTTP snippet — "
-            "available exactly once, in this response."
+            "available exactly once, in this response. The snippet targets "
+            "the API host you called, so local evaluation posts to your "
+            "dev server, not production."
         ),
         request=ProjectInputSerializer,
         responses={
@@ -140,7 +142,10 @@ class ProjectListView(APIView):
                 "project": ProjectOutputSerializer(project).data,
                 "api_key": raw_key,
                 "integration_snippet": integration_snippet(
-                    raw_key, project.environment
+                    raw_key,
+                    project.environment,
+                    base_url="%s://%s"
+                    % (request.scheme, request.get_host()),
                 ),
             },
             status=status.HTTP_201_CREATED,
@@ -285,7 +290,10 @@ class ProjectRotateKeyView(APIView):
                 "project": ProjectOutputSerializer(project).data,
                 "api_key": raw_key,
                 "integration_snippet": integration_snippet(
-                    raw_key, project.environment
+                    raw_key,
+                    project.environment,
+                    base_url="%s://%s"
+                    % (request.scheme, request.get_host()),
                 ),
             }
         )

@@ -8,6 +8,8 @@ ImproperlyConfigured instead of silently running insecure.
 
 from .base import *  # noqa: F401,F403
 
+from django.core.exceptions import ImproperlyConfigured
+
 DEBUG = env.bool("DJANGO_DEBUG", default=False)
 
 # API docs stay off in production; opt in only if you really want to publish
@@ -39,9 +41,13 @@ STORAGES = {
     },
 }
 
-# Email — falls back to the console backend until a real SMTP provider is set.
+# Email — no silent fallback. The console/dummy backends never deliver mail:
+# with one active, signup OTP codes, password resets and email alerts all
+# report success while going nowhere. Prod refuses to boot until delivery
+# is configured — set EMAIL_HOST (+ port/TLS/credentials) for SMTP, which
+# also switches the backend off the dev default below.
 EMAIL_BACKEND = env(
-    "EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend"
+    "EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend"
 )
 EMAIL_HOST = env("EMAIL_HOST", default="")
 EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
@@ -49,6 +55,17 @@ EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 EMAIL_PORT = env.int("EMAIL_PORT", default=587)
 EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="TrazeIQ <no-reply@trazeiq.dev>")
+
+if "console" in EMAIL_BACKEND or "dummy" in EMAIL_BACKEND or (
+    "smtp" in EMAIL_BACKEND.lower() and not EMAIL_HOST
+):
+    raise ImproperlyConfigured(
+        "Email delivery is not configured: without it, signup OTP codes, "
+        "password resets and email alerts silently go nowhere. Set "
+        "EMAIL_HOST (plus EMAIL_PORT/EMAIL_USE_TLS/EMAIL_HOST_USER/"
+        "EMAIL_HOST_PASSWORD as needed) for SMTP, or EMAIL_BACKEND to a "
+        "delivering backend."
+    )
 
 AUTH_COOKIE_SECURE = env.bool("AUTH_COOKIE_SECURE", default=True)
 

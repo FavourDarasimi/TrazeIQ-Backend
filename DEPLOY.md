@@ -41,8 +41,9 @@ Production essentials (wrong values here are the usual day-one outage):
 - `APP_BASE_URL` — the real `https://` frontend URL (incident links in
   emails/Slack/webhooks).
 - Email SMTP (`EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`,
-  `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `DEFAULT_FROM_EMAIL`) — without
-  these, invites and alert emails only print to server logs.
+  `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `DEFAULT_FROM_EMAIL`) — REQUIRED:
+  prod refuses to boot with a console/dummy backend or hostless SMTP, because
+  without delivery signup OTP, password reset and email alerts silently die.
 - `DJANGO_BEHIND_PROXY=True` when TLS terminates at a load balancer that
   sets `X-Forwarded-Proto: https`; keep `DJANGO_SECURE_SSL_REDIRECT=True`
   unless the proxy already forces HTTPS (otherwise redirect loops).

@@ -29,6 +29,7 @@ _BASE_ENV = {
     "POSTGRES_DB": "trazeiq",
     "POSTGRES_USER": "postgres",
     "POSTGRES_PASSWORD": "test-only",
+    "EMAIL_HOST": "smtp.example.com",
 }
 
 
@@ -117,3 +118,39 @@ class ProdSecurityTests(SimpleTestCase):
         self.assertEqual(
             settings.SECURE_PROXY_SSL_HEADER, ("HTTP_X_FORWARDED_PROTO", "https")
         )
+
+    def test_missing_email_host_fails_fast(self):
+        # Without delivery, signup OTP, password reset and email alerts
+        # silently go nowhere — prod must refuse to boot instead.
+        env = dict(_BASE_ENV)
+        del env["EMAIL_HOST"]
+        with mock.patch.dict(os.environ, env, clear=True):
+            with self.assertRaises(ImproperlyConfigured) as ctx:
+                if _PROD_MODULE in sys.modules:
+                    importlib.reload(sys.modules[_PROD_MODULE])
+                else:
+                    importlib.import_module(_PROD_MODULE)
+            self.assertIn("Email", str(ctx.exception))
+        sys.modules.pop(_PROD_MODULE, None)
+
+    def test_console_backend_fails_fast_even_with_host(self):
+        settings_module = _PROD_MODULE
+        with mock.patch.dict(
+            os.environ,
+            {
+                **_BASE_ENV,
+                "EMAIL_BACKEND": "django.core.mail.backends.console.EmailBackend",
+            },
+            clear=True,
+        ):
+            with self.assertRaises(ImproperlyConfigured):
+                if settings_module in sys.modules:
+                    importlib.reload(sys.modules[settings_module])
+                else:
+                    importlib.import_module(settings_module)
+        sys.modules.pop(settings_module, None)
+
+    def test_smtp_with_host_boots(self):
+        settings = _load_prod()
+        self.assertEqual(settings.EMAIL_HOST, "smtp.example.com")
+        self.assertIn("smtp", settings.EMAIL_BACKEND)

@@ -239,3 +239,36 @@ class IncidentOpenUniquenessTests(IncidentSetupMixin, TestCase):
         self.assertEqual(len(incidents), 2)
         statuses = sorted(i["status"] for i in incidents)
         self.assertEqual(statuses, ["open", "resolved"])
+
+class UnknownApiUrlTests(TestCase):
+    """Unmounted API paths return the JSON envelope, never Django HTML.
+
+    AI analysis endpoints are out of scope (no worker in this tree), so
+    their paths are unmounted and must 404 as JSON like any unknown path.
+    """
+
+    def setUp(self):
+        cache.clear()
+
+    def test_unknown_paths_are_json_404(self):
+        from django.test import override_settings
+        from uuid import uuid4
+
+        paths = [
+            "/api/v1/definitely-not-here/",
+            f"/api/v1/incidents/{uuid4()}/analysis/",
+            f"/api/v1/incidents/{uuid4()}/analyze/",
+        ]
+        with override_settings(DEBUG=False):
+            for path in paths:
+                with self.subTest(path=path):
+                    response = APIClient().get(path)
+                    self.assertEqual(response.status_code, 404)
+                    self.assertEqual(
+                        response.json(),
+                        {
+                            "success": False,
+                            "message": "Not found.",
+                            "error": {"code": "NOT_FOUND"},
+                        },
+                    )

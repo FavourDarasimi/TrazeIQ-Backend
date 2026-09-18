@@ -14,7 +14,7 @@ from django.test import TestCase, override_settings
 
 from apps.incidents.models import Incident
 
-from ..dispatchers import dispatch
+from ..dispatchers import DispatchError, dispatch
 from ..models import AlertLog, AlertRule
 from ..services import evaluate_incident
 from .test_alert_rules import AlertSetupMixin
@@ -78,6 +78,37 @@ class EmailDispatchTests(AlertSetupMixin, TestCase):
         log = AlertLog.objects.get(rule=rule)
         self.assertEqual(log.status, AlertLog.Status.DISPATCHED)
         self.assertEqual(log.error, "")
+
+
+class EmailUnconfiguredTests(AlertSetupMixin, TestCase):
+    """A console/dummy backend never delivers — refuse to fake-dispatch.
+
+    Without this guard the console backend "succeeds" and the AlertLog reads
+    ``dispatched`` while the message went to stdout.
+    """
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend"
+    )
+    def test_console_backend_raises_instead_of_dispatching(self):
+        rule = _rule(
+            self.project_id, channel="email", target="oncall@example.io"
+        )
+        with self.assertRaises(DispatchError) as ctx:
+            dispatch(rule, Incident.objects.get(pk=self.incident_id))
+        self.assertIn("not configured", str(ctx.exception))
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend"
+    )
+    def test_evaluate_logs_failed_with_clear_error(self):
+        rule = _rule(
+            self.project_id, channel="email", target="oncall@example.io"
+        )
+        evaluate_incident(Incident.objects.get(pk=self.incident_id))
+        log = AlertLog.objects.get(rule=rule)
+        self.assertEqual(log.status, AlertLog.Status.FAILED)
+        self.assertIn("not configured", log.error)
 
 
 class WebhookDispatchTests(AlertSetupMixin, TestCase):

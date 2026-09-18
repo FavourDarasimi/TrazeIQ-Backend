@@ -3,7 +3,7 @@ from uuid import UUID
 
 from django.db.models import Q
 
-from .models import Event
+from .models import ErrorGroup, Event
 
 
 def _events_for_user(user):
@@ -59,3 +59,22 @@ def get_event_for_user(event_id: UUID, user):
 def parse_date_filter(value: str) -> datetime.date:
     """Parse ``?date=YYYY-MM-DD``, raising ValueError on malformed input."""
     return datetime.date.fromisoformat(value)
+
+
+def _error_groups_for_user(user):
+    """ErrorGroups in the caller's organizations (Agent.md rule 2)."""
+    return ErrorGroup.objects.filter(
+        project__organization__memberships__user=user
+    ).distinct()
+
+
+def list_error_groups_for_user(user, *, project_id: UUID | None = None):
+    """Deduplicated error signatures, most recently-seen first.
+
+    Optional ``project_id`` narrows to one project; unknown/foreign ids
+    resolve to empty (never a leak).
+    """
+    qs = _error_groups_for_user(user)
+    if project_id is not None:
+        qs = qs.filter(project_id=project_id)
+    return qs.select_related("project").order_by("-last_seen", "-id")

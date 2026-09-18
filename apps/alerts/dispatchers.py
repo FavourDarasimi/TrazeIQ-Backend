@@ -16,6 +16,8 @@ import urllib.request
 from django.conf import settings
 from django.core.mail import send_mail
 
+from trazeiq_backend.emailing import email_backend, email_configured
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,6 +67,14 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _dispatch_email(rule, incident) -> None:
+    if not email_configured():
+        # Console/dummy backends "succeed" while delivering nowhere — refuse
+        # to fake-dispatch so the AlertLog reads failed, not dispatched.
+        raise DispatchError(
+            "Email is not configured "
+            f"(EMAIL_BACKEND={email_backend()!r} never delivers); set "
+            "EMAIL_HOST / an SMTP backend before using email alert rules."
+        )
     payload = _summary_payload(incident)
     subject = f"[TrazeIQ] {payload['severity'].title()} incident: {payload['title']}"
     lines = [

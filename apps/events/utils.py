@@ -5,7 +5,10 @@ import re
 
 _SECRET_KEY_RE = re.compile(r"(?i)\bsecret\s*_?\s*key\s*=\s*['\"]?[^\s'\"]+")
 _DATABASE_URL_RE = re.compile(r"(?i)\bdatabase\s*_?\s*url\s*=\s*['\"]?[^\s'\"]+")
-_PASSWORD_RE = re.compile(r"(?i)(password\s*[:=]\s*['\"])([^'\"]+)(['\"])")
+# Quotes around the value are optional (bare password=hunter2 is the common
+# accident) — like SECRET_KEY/DATABASE_URL above. The value stops at
+# whitespace, quotes, commas or semicolons so trailing delimiters survive.
+_PASSWORD_RE = re.compile(r"(?i)(password\s*[:=]\s*['\"]?)([^'\"\s;,]+)(['\"]?)")
 _BEARER_RE = re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]+")
 _JWT_RE = re.compile(r"\beyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b")
 _GENERIC_CREDENTIAL_RE = re.compile(
@@ -41,6 +44,10 @@ _UUID_RE = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"
 )
 _LINE_COL_RE = re.compile(r":\s*\d+(?::\s*\d+)?")
+# Python-style "line 21" / "line=21" / "line #21" — the ":N" rule above only
+# covers "file.py:21" style, so identical tracebacks from different call-site
+# lines (line 21 vs line 31) split into separate groups without this.
+_LINE_WORD_RE = re.compile(r"(?i)\bline\s*[#:=]?\s*\d+")
 _WS_RE = re.compile(r"\s+")
 # Probe/test header and its variable suffix (e.g. wallet-probe-2-1788031896)
 # must not create separate fingerprints — strip the whole header value.
@@ -54,6 +61,7 @@ def _normalize(text: str) -> str:
     # Don't apply numeric-suffix stripping to the path-fingerprint itself;
     # the X-Traze-Test strip already handles the wallet-probe-2-... case.
     text = _LINE_COL_RE.sub(":N", text)
+    text = _LINE_WORD_RE.sub("line N", text)
     text = _WS_RE.sub(" ", text)
     return text.strip().lower()
 
@@ -62,14 +70,22 @@ def fingerprint(*, message: str, stacktrace: str = "") -> str:
     """Deterministic signature for one error pattern, independent of line
     numbers, memory addresses and UUIDs.
 
-    Built from the normalized first message line (the error type) plus the
-    top five normalized stack frames — the parts that identify the pattern
-    without the noise that varies per occurrence.
+    Normalizes both ``file.py:21``-style (``:N``) and ``line 21``-style
+    (``line N``) numbers. Module-level entry frames (``in <module>``) are
+    ignored so the same error called from different entry-point lines does
+    not split into separate groups. Built from the normalized first message
+    line (the error type) plus the top five normalized stack frames — the
+    parts that identify the pattern without the noise that varies per
+    occurrence.
+
+    Known limitation: JS stacks that differ by wrapper depth (an extra
+    ``at ...`` frame in the middle) still fingerprint differently — the
+    frames genuinely differ, so they are treated as distinct patterns.
     """
     frames = [
         line.strip()
         for line in (stacktrace or "").splitlines()
-        if line.strip()
+        if line.strip() and "<module>" not in line.lower()
     ]
     parts = [_normalize(message.splitlines()[0])] if message else []
     parts += [_normalize(frame) for frame in frames[:5]]

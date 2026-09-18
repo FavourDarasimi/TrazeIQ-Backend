@@ -40,3 +40,10 @@ class HealthProbeTests(TestCase):
         self.assertEqual(
             unversioned.data["data"]["status"], versioned.data["data"]["status"]
         )
+
+    def test_email_check_reports_delivery_status(self):
+        # Dev settings use the console backend, so the probe must report
+        # unconfigured here — without touching the overall status.
+        response = self.client.get("/api/v1/health/")
+        email = response.data["data"]["checks"]["email"]
+        self.assertIn(email["status"], ("ok", "unconfigured"))

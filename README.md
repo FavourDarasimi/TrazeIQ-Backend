@@ -1,0 +1,142 @@
+# TrazeIQ Backend
+
+TrazeIQ helps developers track, deduplicate, and resolve errors occurring in their live applications. It takes raw error events, organizes them into actionable incidents, and pushes real-time alerts so teams can respond immediately. The platform provides complete visibility into system health, keeping engineering teams informed without overwhelming them with noise.
+
+## System Architecture
+
+```mermaid
+flowchart LR
+  Client["Monitored App"]
+  API["API Server"]
+  DB[("PostgreSQL")]
+  Redis[("Redis Cache")]
+  Realtime["Pusher Realtime"]
+
+  Client --> API
+  API --> DB
+  API --> Redis
+  API --> Realtime
+
+  style Client fill:#1e1b4b,stroke:#6366f1,stroke-width:2px,color:#fff
+  style API fill:#2e1065,stroke:#8b5cf6,stroke-width:2px,color:#fff
+  style DB fill:#0f172a,stroke:#3b82f6,stroke-width:2px,color:#fff
+  style Redis fill:#4c0519,stroke:#ef4444,stroke-width:2px,color:#fff
+  style Realtime fill:#451a03,stroke:#f59e0b,stroke-width:2px,color:#fff
+```
+
+## Features
+
+* **Error Deduplication and Incident Management**: Groups identical error events into a single incident to reduce noise, allowing teams to assign, comment, and resolve issues collaboratively.
+
+```mermaid
+sequenceDiagram
+  actor App
+  participant API
+  participant DB as Database
+  participant Alerts as Dispatcher
+
+  App->>API: POST /events/
+  API->>API: Redact secrets and generate fingerprint
+  API->>DB: Upsert Error Group
+  API->>DB: Create or reuse Open Incident
+  API->>Alerts: Evaluate alert rules
+  API->>App: Return 201 Created
+```
+
+* **Multi-Tenant Organizations**: Supports isolated workspaces where teams can manage their own projects, API keys, and role-based access control.
+* **Real-Time Event Publishing**: Streams incident updates and new error occurrences directly to connected clients without requiring manual page refreshes.
+
+```mermaid
+sequenceDiagram
+  actor Developer
+  participant API
+  participant DB as Database
+  participant Realtime as Pusher
+
+  Developer->>API: PATCH /incidents/id/
+  API->>DB: Update incident status
+  API->>DB: Append timeline entry
+  API->>Realtime: Broadcast incident update
+  API->>Developer: Return updated incident
+```
+
+* **Automated Alert Dispatch**: Routes critical incident notifications to configured channels like Slack, custom Webhooks, and Email based on customizable rules and severity thresholds.
+* **Platform Analytics**: Generates time-series data and health metrics to provide teams with an accurate overview of error volume and service uptime.
+
+## Installation
+
+Follow these steps to set up the project locally:
+
+1. Clone the repository:
+```bash
+git clone https://github.com/FavourDarasimi/TrazeIQ-Backend.git
+cd TrazeIQ-Backend
+```
+
+2. Create a virtual environment and activate it:
+```bash
+python -m venv venv
+source venv/bin/activate
+```
+
+3. Install the required dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+4. Configure your environment variables by copying the example file:
+```bash
+cp .env.example .env
+```
+
+5. Apply database migrations:
+```bash
+python manage.py migrate
+```
+
+6. Start the local development server:
+```bash
+python manage.py runserver
+```
+
+## Usage
+
+Once the server is running, you can ingest errors into the system. To send an error event to the backend, make a POST request with your project API key:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/events/ \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_PROJECT_API_KEY" \
+  -d '{"environment": "production", "message": "DatabaseError: connection refused", "level": "fatal"}'
+```
+
+You can view the resulting incidents, error groups, and timeline updates by logging into the frontend dashboard and navigating to your project workspace.
+
+## Technologies Used
+
+| Category | Technology |
+| --- | --- |
+| Core Language | Python |
+| Web Framework | Django, Django REST Framework |
+| Database | PostgreSQL |
+| Caching & Rate Limiting | Redis |
+| Real-Time Events | Pusher |
+| Authentication | JWT (SimpleJWT) |
+| Web Server | Gunicorn, WhiteNoise |
+
+## Contributing
+
+We welcome contributions to the project. To contribute, please fork the repository, create a new branch for your feature or bug fix, and submit a pull request for review. Ensure that your code follows the existing style and includes appropriate tests.
+
+## Author Info
+
+* X (Twitter): https://x.com/code_with_dara
+
+---
+
+[![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Django](https://img.shields.io/badge/Django-092E20?style=for-the-badge&logo=django&logoColor=white)](https://www.djangoproject.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io/)
+
+[![Readme was generated by Dokugen](https://img.shields.io/badge/Readme%20was%20generated%20by-Dokugen-brightgreen)](https://dokugen.samueltuoyo.com)

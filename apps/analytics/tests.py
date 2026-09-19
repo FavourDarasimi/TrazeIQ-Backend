@@ -108,6 +108,29 @@ class DashboardAnalyticsTestCase(TestCase):
         self.assertIsNotNone(critical_top["incident_id"])
         self.assertEqual(critical_top["severity"], "critical")
         self.assertEqual(critical_top["count"], 1)
+        self.assertEqual(critical_top["status"], "open")
+
+    def test_top_errors_carry_true_status(self):
+        self._ingest(self.project, "OpenBoom", level="error")
+        self._ingest(self.project, "DoneBoom", level="error")
+        done = Incident.objects.get(error_group__title="DoneBoom")
+        done.status = Incident.Status.RESOLVED
+        done.resolved_at = timezone.now()
+        done.save()
+
+        res = self.client.get(
+            "/api/v1/dashboard/overview/?project_id=%s" % self.project.id
+        )
+        by_title = {
+            error["title"]: error
+            for error in res.data["data"]["overview"]["top_errors"]
+        }
+        self.assertEqual(by_title["OpenBoom"]["status"], "open")
+        self.assertIsNotNone(by_title["OpenBoom"]["incident_id"])
+        # Fully-resolved group: no open incident to link, but the true
+        # status is still reported instead of a hardcoded guess.
+        self.assertEqual(by_title["DoneBoom"]["status"], "resolved")
+        self.assertIsNone(by_title["DoneBoom"]["incident_id"])
 
     def test_overview_scopes_to_project(self):
         self._ingest(self.project, "ProjectError", level="error")

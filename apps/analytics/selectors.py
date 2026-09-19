@@ -101,8 +101,19 @@ def overview_for_user(user, project_id: UUID | None = None) -> dict:
                 status__in=OPEN_STATUSES,
             )
         }
+        # Latest incident of any status per group, so rows can show the true
+        # workflow state (a fully-resolved group has no open incident left).
+        latest_by_group = {}
+        missing = [g.id for g in groups if g.id not in open_incidents]
+        if missing:
+            latest = incidents.filter(error_group__in=missing).order_by(
+                "-created_at", "-id"
+            )
+            for incident in latest:
+                latest_by_group.setdefault(incident.error_group_id, incident)
         for group in groups:
             incident = open_incidents.get(group.id)
+            state = incident or latest_by_group.get(group.id)
             top_errors.append(
                 {
                     "fingerprint": group.fingerprint,
@@ -111,6 +122,7 @@ def overview_for_user(user, project_id: UUID | None = None) -> dict:
                     "last_seen": group.last_seen,
                     "incident_id": str(incident.id) if incident else None,
                     "severity": incident.severity if incident else None,
+                    "status": state.status if state else None,
                 }
             )
 

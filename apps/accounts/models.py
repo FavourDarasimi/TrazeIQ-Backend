@@ -8,10 +8,11 @@ from django.utils import timezone
 from trazeiq_backend.models import UUIDModel
 
 from .utils import hash_code
+from .validators import validate_username
 
 
 class UserManager(BaseUserManager):
-    """Email-based user manager — the username field is not used."""
+    """Email-based user manager; ``username`` arrives via ``extra_fields``."""
 
     use_in_migrations = True
 
@@ -40,13 +41,24 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractUser, UUIDModel):
-    """The TrazeIQ user. Login identifier is email, not username.
+    """The TrazeIQ user. Primary login identifier is email, not username.
+
+    ``username`` is a unique public handle: chosen at signup, usable to log
+    in as an alternative to the email address, and shown across the UI.
+    ``USERNAME_FIELD`` deliberately stays ``email`` (createsuperuser, admin
+    and lockout accounting all key off it) — username login is resolved
+    explicitly in ``apps.accounts.services.authenticate_user``.
 
     ``id`` comes from the shared ``UUIDModel`` base (a UUID primary key),
     so the auth token claims and every FK to the user share the UUID type.
     """
 
-    username = None
+    username = models.CharField(
+        max_length=30,
+        unique=True,
+        validators=[validate_username],
+        help_text="Public handle: 3–30 lowercase chars (a-z, 0-9, dot, underscore, hyphen).",
+    )
 
     email = models.EmailField("email address", unique=True)
     email_verified = models.BooleanField(default=False)

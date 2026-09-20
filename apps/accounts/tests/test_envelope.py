@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 from django.test import TestCase, override_settings
 
 EMAIL = "env@trazeiq.io"
+USERNAME = "env_trazeiq"
 PASSWORD = "fdsK9Qop21z!"
 
 
@@ -16,7 +17,7 @@ class EnvelopeTests(TestCase):
     def setUp(self):
         self.client = APIClient()
 
-    def register_verified(self, email=EMAIL, password=PASSWORD):
+    def register_verified(self, email=EMAIL, password=PASSWORD, username=USERNAME):
         self.client.post(
             "/api/v1/auth/register/request-otp/",
             {"email": email},
@@ -31,6 +32,7 @@ class EnvelopeTests(TestCase):
             "/api/v1/auth/register/complete/",
             {
                 "registration_token": verified.data["data"]["registration_token"],
+                "username": username,
                 "password": password,
                 "confirm_password": password,
             },
@@ -40,7 +42,7 @@ class EnvelopeTests(TestCase):
     def test_login_success_has_envelope_with_user_data(self):
         self.register_verified()
         response = self.client.post(
-            "/api/v1/auth/login/", {"email": EMAIL, "password": PASSWORD}, format="json"
+            "/api/v1/auth/login/", {"identifier": EMAIL, "password": PASSWORD}, format="json"
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["success"], True)
@@ -89,7 +91,7 @@ class EnvelopeTests(TestCase):
     def test_bad_credentials_maps_to_code(self):
         response = self.client.post(
             "/api/v1/auth/login/",
-            {"email": EMAIL, "password": "TotallyWrong!"},
+            {"identifier": EMAIL, "password": "TotallyWrong!"},
             format="json",
         )
         self.assertEqual(response.status_code, 401)

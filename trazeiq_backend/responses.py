@@ -24,6 +24,7 @@ class ErrorCode:
     """Machine-readable error codes the frontend can branch on."""
 
     EMAIL_TAKEN = "EMAIL_TAKEN"
+    USERNAME_TAKEN = "USERNAME_TAKEN"
     INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
     EMAIL_NOT_VERIFIED = "EMAIL_NOT_VERIFIED"
     ALREADY_VERIFIED = "ALREADY_VERIFIED"

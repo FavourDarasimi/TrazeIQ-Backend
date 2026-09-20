@@ -5,6 +5,11 @@ def get_user_by_email(email: str) -> User | None:
     return User.objects.filter(email=email).first()
 
 
+def get_user_by_username(username: str) -> User | None:
+    """Fetch by public handle (callers lowercase first; stored lowercase)."""
+    return User.objects.filter(username=username).first()
+
+
 def get_user_by_id(user_id) -> User | None:
     try:
         return User.objects.get(id=user_id) if user_id is not None else None
@@ -18,6 +23,12 @@ def get_user_by_google_sub(sub: str) -> User | None:
 
 def user_exists(email: str) -> bool:
     return User.objects.filter(email=email).exists()
+
+
+def username_exists(username: str) -> bool:
+    """Case-insensitive: the DB unique constraint is case-sensitive, so the
+    application layer owns the case-insensitive guarantee."""
+    return User.objects.filter(username__iexact=username).exists()
 
 
 def get_live_otp(user: User, purpose: OTPPurpose) -> OTPCode | None:

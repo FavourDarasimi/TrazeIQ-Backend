@@ -11,6 +11,7 @@ from django.core.cache import cache
 from django.test import TestCase, override_settings
 
 EMAIL = "throttle@trazeiq.io"
+USERNAME = "throttle_trazeiq"
 PASSWORD = "fdsK9Qop21z!"
 
 
@@ -32,6 +33,7 @@ class ThrottlingTests(TestCase):
             "/api/v1/auth/register/complete/",
             {
                 "registration_token": verified.data["data"]["registration_token"],
+                "username": USERNAME,
                 "password": PASSWORD,
                 "confirm_password": PASSWORD,
             },
@@ -44,14 +46,14 @@ class ThrottlingTests(TestCase):
         for _ in range(2):
             response = self.client.post(
                 "/api/v1/auth/login/",
-                {"email": EMAIL, "password": PASSWORD},
+                {"identifier": EMAIL, "password": PASSWORD},
                 format="json",
             )
             self.assertEqual(response.status_code, 200)
 
         response = self.client.post(
             "/api/v1/auth/login/",
-            {"email": EMAIL, "password": PASSWORD},
+            {"identifier": EMAIL, "password": PASSWORD},
             format="json",
         )
         self.assertEqual(response.status_code, 429)
@@ -64,7 +66,7 @@ class ThrottlingTests(TestCase):
         for _ in range(2):
             response = self.client.post(
                 "/api/v1/auth/login/",
-                {"email": EMAIL, "password": PASSWORD},
+                {"identifier": EMAIL, "password": PASSWORD},
                 format="json",
             )
             self.assertEqual(response.status_code, 200)
@@ -72,7 +74,7 @@ class ThrottlingTests(TestCase):
         # The login scope is spent — the third attempt is blocked.
         response = self.client.post(
             "/api/v1/auth/login/",
-            {"email": EMAIL, "password": PASSWORD},
+            {"identifier": EMAIL, "password": PASSWORD},
             format="json",
         )
         self.assertEqual(response.status_code, 429)

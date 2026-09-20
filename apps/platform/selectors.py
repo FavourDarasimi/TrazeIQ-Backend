@@ -116,7 +116,7 @@ def list_users(search: str = ""):
         org_count=Count("memberships", distinct=True)
     ).order_by("-date_joined")
     if search:
-        qs = qs.filter(email__icontains=search)
+        qs = qs.filter(Q(email__icontains=search) | Q(username__icontains=search))
     return qs
 
 

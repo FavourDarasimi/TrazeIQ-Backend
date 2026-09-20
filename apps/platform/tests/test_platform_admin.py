@@ -40,11 +40,13 @@ class PlatformAdminAccessTests(TestCase):
             password=PASSWORD,
             email_verified=True,
             is_staff=True,
+            username="staff_trazeiq",
         )
         self.user = User.objects.create_user(
             email="dev@example.com",
             password=PASSWORD,
             email_verified=True,
+            username="dev_example",
         )
 
     def test_anonymous_gets_401(self):
@@ -87,6 +89,7 @@ class PlatformAdminDataTests(TestCase):
             password=PASSWORD,
             email_verified=True,
             is_staff=True,
+            username="staff_trazeiq",
         )
         # Two tenants — the platform surface must see both (no tenant
         # scoping here, unlike every product endpoint).
@@ -97,6 +100,7 @@ class PlatformAdminDataTests(TestCase):
             email="owner@rivals.io",
             password=PASSWORD,
             email_verified=True,
+            username="owner_rivals",
         )
         self.org_b = Organization.objects.create(
             name="Rivals Ltd", owner=owner_b

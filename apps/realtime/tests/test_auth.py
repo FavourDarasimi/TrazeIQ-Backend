@@ -28,7 +28,10 @@ AUTH_CREDS = dict(
 class PusherAuthTestCase(TestCase):
     def setUp(self):
         self.owner = User.objects.create_user(
-            email="owner@example.com", password=PASSWORD, email_verified=True
+            email="owner@example.com",
+            password=PASSWORD,
+            email_verified=True,
+            username="owner_example",
         )
         self.org = Organization.objects.create(name="Acme Inc", owner=self.owner)
         Membership.objects.create(
@@ -39,7 +42,10 @@ class PusherAuthTestCase(TestCase):
         )
 
         self.other = User.objects.create_user(
-            email="other@example.com", password=PASSWORD, email_verified=True
+            email="other@example.com",
+            password=PASSWORD,
+            email_verified=True,
+            username="other_example",
         )
         self.other_org = Organization.objects.create(
             name="Rivals Ltd", owner=self.other

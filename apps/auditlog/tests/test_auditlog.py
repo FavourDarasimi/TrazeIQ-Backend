@@ -22,8 +22,15 @@ PASSWORD = "Password123!"
 
 
 def make_user(email, org=None, role=None):
+    import re
+
+    local, _, domain = email.lower().partition("@")
+    username = (
+        re.sub(r"[^a-z0-9._-]", "", f"{local}_{domain.split('.')[0]}")[:30]
+        or "testuser"
+    )
     user = User.objects.create_user(
-        email=email, password=PASSWORD, email_verified=True
+        email=email, password=PASSWORD, email_verified=True, username=username
     )
     if org is not None and role is not None:
         Membership.objects.create(user=user, organization=org, role=role)

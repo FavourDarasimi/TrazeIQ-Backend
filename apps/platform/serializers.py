@@ -16,6 +16,7 @@ class PlatformUserSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "email",
+            "username",
             "name",
             "is_active",
             "is_staff",
@@ -27,7 +28,7 @@ class PlatformUserSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_name(self, obj) -> str:
-        return obj.first_name or obj.email.split("@")[0]
+        return obj.username or obj.first_name or obj.email.split("@")[0]
 
 
 class PlatformOrganizationSerializer(serializers.ModelSerializer):

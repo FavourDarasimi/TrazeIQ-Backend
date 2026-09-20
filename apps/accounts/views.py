@@ -43,6 +43,7 @@ from .services import (
     registration_email_cap_exhausted,
     request_registration_otp,
     reset_password,
+    resolve_account_email,
     rotate_refresh_token,
     tokens_for,
     verify_registration_otp,
@@ -56,12 +57,16 @@ class _AuthView(APIView):
     throttle_classes = [AuthScopedRateThrottle]
 
 
-def _is_locked_out(request, email: str) -> bool:
-    """True when axes has locked this (IP, username) pair out of login."""
+def _is_locked_out(request, identifier: str) -> bool:
+    """True when axes has locked this (IP, account) pair out of login.
+
+    ``identifier`` may be an email or a username — it is resolved to the
+    account's email first so both identifiers share one lockout bucket.
+    """
     if not settings.AXES_ENABLED:
         return False
     # AXES_USERNAME_FORM_FIELD resolves to User.USERNAME_FIELD — "email" here.
-    return AxesProxyHandler.is_locked(request, credentials={"email": email})
+    return AxesProxyHandler.is_locked(request, credentials={"email": identifier})
 
 
 def _lockout_response() -> Response:
@@ -194,7 +199,7 @@ class RegisterCompleteView(_AuthView):
     @extend_schema(
         tags=["auth"],
         operation_id="register_complete",
-        summary="Signup step 3 — create the account and log in",
+        summary="Signup step 3 — choose a username and create the account",
         description=(
             "Creates the user (verified + active) from the registration token, "
             "password and password confirmation, then signs the account in with "
@@ -223,12 +228,19 @@ class RegisterCompleteView(_AuthView):
         ok, reason, user = complete_registration(
             registration_token=data["registration_token"],
             password=data["password"],
+            username=data["username"],
         )
         if not ok:
             if reason == "email_taken":
                 return api_error(
                     ErrorCode.EMAIL_TAKEN,
                     "An account with this email already exists.",
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if reason == "username_taken":
+                return api_error(
+                    ErrorCode.USERNAME_TAKEN,
+                    "This username is already taken.",
                     status=status.HTTP_409_CONFLICT,
                 )
             if reason == "expired_token":
@@ -252,7 +264,7 @@ class LoginView(_AuthView):
 
     @extend_schema(
         tags=["auth"],
-        summary="Log in with email + password",
+        summary="Log in with username or email + password",
         description=(
             "Sends the user in ``data.user`` and sets two httpOnly cookies: "
             "trazeiq_refresh (7 days, path /api/v1/auth/) and trazeiq_access "
@@ -276,26 +288,33 @@ class LoginView(_AuthView):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        email = data["email"]
+        identifier = data["identifier"]
         password = data["password"]
 
+        # Resolve the identifier to the account email first: brute-force
+        # attempts count against the account no matter which identifier an
+        # attacker tries. Unknown identifiers fall back to themselves so
+        # they still count per (IP, identifier) without revealing whether
+        # the account exists (the response stays a flat 401 either way).
+        account_email = resolve_account_email(identifier)
+
         # Brute-force lockout: skip the password check entirely for a locked pair.
-        if _is_locked_out(request, email):
+        if _is_locked_out(request, account_email):
             return _lockout_response()
 
-        user = authenticate_user(email=email, password=password)
+        user = authenticate_user(identifier=identifier, password=password)
         if user is None:
-            # Count the failure against this (IP, username) pair via the django-axes
+            # Count the failure against this (IP, account) pair via the django-axes
             # handler (connected to user_login_failed). Our login flow bypasses
             # django.contrib.auth.authenticate(), so the signal is sent manually.
             user_login_failed.send(
                 sender=LoginView,
                 request=request,
-                credentials={"email": email},
+                credentials={"email": account_email},
             )
             return api_error(
                 ErrorCode.INVALID_CREDENTIALS,
-                "Invalid email or password.",
+                "Invalid credentials.",
                 status=status.HTTP_401_UNAUTHORIZED,
             )
         if not user.email_verified or not user.is_active:
@@ -306,7 +325,7 @@ class LoginView(_AuthView):
             )
 
         if settings.AXES_ENABLED:
-            AxesProxyHandler.reset_attempts(username=email)
+            AxesProxyHandler.reset_attempts(username=account_email)
         return _signed_in_response(user)
 
 

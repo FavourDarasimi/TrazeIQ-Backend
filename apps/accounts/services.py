@@ -18,9 +18,12 @@ from .selectors import (
     get_user_by_email,
     get_user_by_google_sub,
     get_user_by_id,
+    get_user_by_username,
     user_exists,
+    username_exists,
 )
 from .utils import generate_otp, generate_registration_token, hash_code
+from .validators import validate_username
 
 logger = logging.getLogger(__name__)
 
@@ -98,14 +101,18 @@ def verify_registration_otp(email: str, code: str) -> tuple[bool, str, str | Non
 
 
 def complete_registration(
-    registration_token: str, password: str
+    registration_token: str, password: str, username: str
 ) -> tuple[bool, str, User | None]:
     """Create the account once the registration token checks out.
 
     Returns ``(ok, reason, user)``; on success the user is verified + active
     and the caller logs them in. The token is single-use — a replayed or
-    expired token never reaches this branch.
+    expired token never reaches this branch. ``username`` arrives lowercased
+    and validated; the final uniqueness guard is the DB constraint (a lost
+    race surfaces as ``username_taken``, never a 500).
     """
+    from django.db import IntegrityError
+
     token = RegistrationToken.objects.filter(
         token_hash=hash_code(registration_token)
     ).first()
@@ -115,14 +122,20 @@ def complete_registration(
         return False, "expired_token", None
     if user_exists(token.email):
         return False, "email_taken", None
+    if username_exists(username):
+        return False, "username_taken", None
 
-    user = User.objects.create_user(
-        email=token.email,
-        password=password,
-        email_verified=True,
-        is_active=True,
-        auth_provider="email",
-    )
+    try:
+        user = User.objects.create_user(
+            email=token.email,
+            password=password,
+            username=username,
+            email_verified=True,
+            is_active=True,
+            auth_provider="email",
+        )
+    except IntegrityError:
+        return False, "username_taken", None
     token.used_at = timezone.now()
     token.save(update_fields=["used_at"])
     return True, "created", user
@@ -131,11 +144,60 @@ def complete_registration(
 # --- Login / sessions ---------------------------------------------------------
 
 
-def authenticate_user(email: str, password: str) -> User | None:
-    user = get_user_by_email(email)
+def resolve_login_identifier(identifier: str) -> User | None:
+    """Resolve an ``identifier`` (email address or username) to a user.
+
+    Anything containing ``@`` takes the email path; everything else is a
+    username lookup. Both are stored lowercase, so the input is lowered
+    first — ``User.USERNAME_FIELD`` stays ``email`` on purpose; dual login
+    lives here, not in Django's auth machinery.
+    """
+    identifier = (identifier or "").strip().lower()
+    if not identifier:
+        return None
+    if "@" in identifier:
+        return get_user_by_email(identifier)
+    return get_user_by_username(identifier)
+
+
+def resolve_account_email(identifier: str) -> str:
+    """The axes accounting key for a login identifier.
+
+    Resolves to the account's email so email- and username-based attempts
+    share one lockout bucket; unknown identifiers fall back to themselves.
+    """
+    user = resolve_login_identifier(identifier)
+    if user is not None:
+        return user.email
+    return (identifier or "").strip().lower()
+
+
+def authenticate_user(identifier: str, password: str) -> User | None:
+    user = resolve_login_identifier(identifier)
     if user is None or not user.check_password(password):
         return None
     return user
+
+
+def derive_username(email: str, name: str = "") -> str:
+    """Pick a unique handle for accounts that never chose one (Google).
+
+    Sanitized from the email prefix (falling back to the display name),
+    suffixed on collision. Always satisfies ``validate_username``.
+    """
+    import re
+
+    base = "user"
+    for raw in ((email or "").split("@")[0], name or ""):
+        cleaned = re.sub(r"[^a-z0-9._-]", "", raw.lower())[:30]
+        if len(cleaned) >= 3:
+            base = cleaned
+            break
+    candidate, suffix = base, 1
+    while username_exists(candidate):
+        suffix += 1
+        candidate = f"{base[: 30 - len(str(suffix)) - 1]}-{suffix}"
+    return candidate
 
 
 def rotate_refresh_token(raw: str) -> tuple[User, dict] | None:
@@ -193,6 +255,7 @@ def google_authenticate(email: str, id_token: str, name: str) -> User:
         user = User.objects.create_user(
             email=email,
             password=None,
+            username=derive_username(email, name),
             first_name=(name or "").strip(),
             email_verified=True,
             is_active=True,

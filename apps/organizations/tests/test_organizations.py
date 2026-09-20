@@ -11,6 +11,13 @@ from ..models import Membership, MembershipRole, Organization
 User = get_user_model()
 
 
+def _username_for_email(email: str) -> str:
+    import re
+
+    local, _, domain = email.lower().partition("@")
+    return (re.sub(r"[^a-z0-9._-]", "", f"{local}_{domain.split('.')[0]}")[:30] or "testuser")
+
+
 def register_and_login(client: APIClient, email: str) -> None:
     """Full auth flow — the same cookie-based session the frontend uses.
 
@@ -29,6 +36,7 @@ def register_and_login(client: APIClient, email: str) -> None:
         "/api/v1/auth/register/complete/",
         {
             "registration_token": verified.data["data"]["registration_token"],
+            "username": _username_for_email(email),
             "password": "fdsK9Qop21z!",
             "confirm_password": "fdsK9Qop21z!",
         },

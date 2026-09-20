@@ -7,21 +7,21 @@ from .models import OTPCode, RegistrationToken, User
 @admin.register(User)
 class UserAdminConfig(UserAdmin):
     ordering = ("email",)
-    search_fields = ("email",)
-    list_display = ("email", "auth_provider", "email_verified", "is_staff", "is_active", "date_joined")
+    search_fields = ("email", "username")
+    list_display = ("email", "username", "auth_provider", "email_verified", "is_staff", "is_active", "date_joined")
     list_filter = ("is_staff", "is_superuser", "is_active", "auth_provider", "email_verified")
     readonly_fields = ("last_login", "date_joined")
 
     fieldsets = (
         (None, {"fields": ("email", "password")}),
-        ("Profile", {"fields": ("first_name", "last_name", "email_verified", "auth_provider", "google_sub")}),
+        ("Profile", {"fields": ("username", "first_name", "last_name", "email_verified", "auth_provider", "google_sub")}),
         ("Permissions", {"fields": ("is_staff", "is_superuser", "is_active", "groups", "user_permissions")}),
         ("Important dates", {"fields": ("last_login", "date_joined")}),
     )
     add_fieldsets = (
         (None, {
             "classes": ("wide",),
-            "fields": ("email", "password1", "password2"),
+            "fields": ("email", "username", "password1", "password2"),
         }),
     )
 

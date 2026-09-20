@@ -1,6 +1,8 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
+
 from rest_framework import serializers
 
-from .validators import validate_new_password
+from .validators import validate_new_password, validate_username
 
 
 def validate_email_lower(value: str) -> str:
@@ -33,8 +35,17 @@ class CompleteRegistrationSerializer(serializers.Serializer):
     """
 
     registration_token = serializers.CharField()
+    username = serializers.CharField(min_length=3, max_length=30)
     password = serializers.CharField(write_only=True)
     confirm_password = serializers.CharField(write_only=True)
+
+    def validate_username(self, value):
+        value = (value or "").strip().lower()
+        try:
+            validate_username(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages)
+        return value
 
     def validate_password(self, value):
         if len(value) < 8:
@@ -55,6 +66,7 @@ class UserOutputSerializer(serializers.Serializer):
     """Read-only shape of a user for response bodies."""
 
     email = serializers.EmailField(read_only=True)
+    username = serializers.CharField(read_only=True)
     name = serializers.SerializerMethodField()
     email_verified = serializers.BooleanField(read_only=True)
     auth_provider = serializers.CharField(read_only=True)
@@ -63,7 +75,7 @@ class UserOutputSerializer(serializers.Serializer):
     is_staff = serializers.BooleanField(read_only=True)
 
     def get_name(self, obj) -> str:
-        return obj.first_name or obj.email.split("@")[0]
+        return obj.username or obj.first_name or obj.email.split("@")[0]
 
 
 class DetailResponseSerializer(serializers.Serializer):
@@ -80,11 +92,13 @@ class AuthSessionSerializer(serializers.Serializer):
 
 
 class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    """Email address or username plus password — resolved server-side."""
+
+    identifier = serializers.CharField()
     password = serializers.CharField(write_only=True)
 
-    def validate_email(self, value):
-        return validate_email_lower(value)
+    def validate_identifier(self, value):
+        return (value or "").strip().lower()
 
 
 class GoogleAuthSerializer(serializers.Serializer):

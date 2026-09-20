@@ -127,7 +127,7 @@ class PlatformUserListView(PlatformAdminMixin):
         summary="List platform users",
         description=(
             "All accounts newest-first with org counts. Filter with "
-            "?search=<email substring>. Never exposes password hashes."
+            "?search=<email or username substring>. Never exposes password hashes."
         ),
         responses={
             200: envelope_schema(

@@ -11,6 +11,15 @@ from apps.incidents.models import Incident
 PASSWORD = "fdsK9Qop21z!"
 
 
+def _username_for_email(email: str) -> str:
+    """Deterministic test handle: unique per email, always valid."""
+    import re
+
+    local, _, domain = email.lower().partition("@")
+    base = re.sub(r"[^a-z0-9._-]", "", f"{local}_{domain.split('.')[0]}")
+    return (base[:30] or "testuser")
+
+
 def register_and_login(client: APIClient, email: str) -> None:
     client.post(
         "/api/v1/auth/register/request-otp/", {"email": email}, format="json"
@@ -24,6 +33,7 @@ def register_and_login(client: APIClient, email: str) -> None:
         "/api/v1/auth/register/complete/",
         {
             "registration_token": verified.data["data"]["registration_token"],
+            "username": _username_for_email(email),
             "password": PASSWORD,
             "confirm_password": PASSWORD,
         },

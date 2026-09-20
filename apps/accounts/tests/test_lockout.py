@@ -1,8 +1,9 @@
 """Brute-force lockout via django-axes.
 
-Axes records failed logins per (IP, username). The login view checks the
+Axes records failed logins per (IP, account). The login view checks the
 lockout before checking credentials, counts failures via the user_login_failed
-signal, and resets the counters on a successful login.
+signal keyed by the resolved account email (so email- and username-based
+attempts share one bucket), and resets the counters on a successful login.
 """
 
 from rest_framework.test import APIClient
@@ -13,7 +14,31 @@ from django.core.cache import cache
 from django.test import TestCase, override_settings
 
 EMAIL = "lockout@trazeiq.io"
+USERNAME = "lockout_trazeiq"
 PASSWORD = "fdsK9Qop21z!"
+
+
+def _register(client, email, username):
+    client.post(
+        "/api/v1/auth/register/request-otp/",
+        {"email": email},
+        format="json",
+    )
+    verified = client.post(
+        "/api/v1/auth/register/verify-otp/",
+        {"email": email, "otp": "000000"},
+        format="json",
+    )
+    client.post(
+        "/api/v1/auth/register/complete/",
+        {
+            "registration_token": verified.data["data"]["registration_token"],
+            "username": username,
+            "password": PASSWORD,
+            "confirm_password": PASSWORD,
+        },
+        format="json",
+    )
 
 
 @override_settings(AXES_FAILURE_LIMIT=3)
@@ -23,39 +48,24 @@ class LockoutTests(TestCase):
         AxesProxyHandler.reset_attempts()
         cache.clear()  # reset the per-email signup cap between test cases
         self.client = APIClient()
-        self.client.post(
-            "/api/v1/auth/register/request-otp/",
-            {"email": EMAIL},
-            format="json",
-        )
-        verified = self.client.post(
-            "/api/v1/auth/register/verify-otp/",
-            {"email": EMAIL, "otp": "000000"},
-            format="json",
-        )
-        self.client.post(
-            "/api/v1/auth/register/complete/",
-            {
-                "registration_token": verified.data["data"]["registration_token"],
-                "password": PASSWORD,
-                "confirm_password": PASSWORD,
-            },
+        _register(self.client, EMAIL, USERNAME)
+
+    def _fail(self, identifier, password="WrongPass!"):
+        return self.client.post(
+            "/api/v1/auth/login/",
+            {"identifier": identifier, "password": password},
             format="json",
         )
 
     def test_account_locks_after_failure_limit(self):
         for _ in range(3):
-            response = self.client.post(
-                "/api/v1/auth/login/",
-                {"email": EMAIL, "password": "WrongPass!"},
-                format="json",
-            )
+            response = self._fail(EMAIL)
             self.assertEqual(response.status_code, 401)
             self.assertEqual(response.data["error"]["code"], "INVALID_CREDENTIALS")
 
         response = self.client.post(
             "/api/v1/auth/login/",
-            {"email": EMAIL, "password": PASSWORD},
+            {"identifier": EMAIL, "password": PASSWORD},
             format="json",
         )
         self.assertEqual(response.status_code, 429)
@@ -63,90 +73,73 @@ class LockoutTests(TestCase):
         self.assertEqual(response.data["error"]["code"], "TOO_MANY_REQUESTS")
 
     def test_correct_password_is_rejected_while_locked(self):
-        self.client.post(
-            "/api/v1/auth/login/",
-            {"email": EMAIL, "password": "WrongPass!"},
-            format="json",
-        )
-        self.client.post(
-            "/api/v1/auth/login/",
-            {"email": EMAIL, "password": "WrongPass!"},
-            format="json",
-        )
-        self.client.post(
-            "/api/v1/auth/login/",
-            {"email": EMAIL, "password": "WrongPass!"},
-            format="json",
-        )
+        self._fail(EMAIL)
+        self._fail(EMAIL)
+        self._fail(EMAIL)
 
         response = self.client.post(
             "/api/v1/auth/login/",
-            {"email": EMAIL, "password": PASSWORD},
+            {"identifier": EMAIL, "password": PASSWORD},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 429)
+
+    def test_lockout_via_username_shares_email_bucket(self):
+        self._fail(USERNAME)
+        self._fail(USERNAME)
+        self._fail(USERNAME)
+
+        # Correct password via email is still locked: same account bucket.
+        response = self.client.post(
+            "/api/v1/auth/login/",
+            {"identifier": EMAIL, "password": PASSWORD},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 429)
+
+    def test_mixed_identifiers_share_one_bucket(self):
+        self._fail(EMAIL)
+        self._fail(USERNAME)
+        self._fail(EMAIL)
+
+        response = self.client.post(
+            "/api/v1/auth/login/",
+            {"identifier": USERNAME, "password": PASSWORD},
             format="json",
         )
         self.assertEqual(response.status_code, 429)
 
     def test_successful_login_resets_attempts(self):
         for _ in range(2):
-            self.client.post(
-                "/api/v1/auth/login/",
-                {"email": EMAIL, "password": "WrongPass!"},
-                format="json",
-            )
+            self._fail(EMAIL)
 
         response = self.client.post(
             "/api/v1/auth/login/",
-            {"email": EMAIL, "password": PASSWORD},
+            {"identifier": EMAIL, "password": PASSWORD},
             format="json",
         )
         self.assertEqual(response.status_code, 200)
 
         # A fresh failure cycle starts over instead of instantly re-locking.
-        response = self.client.post(
-            "/api/v1/auth/login/",
-            {"email": EMAIL, "password": "WrongPass!"},
-            format="json",
-        )
+        response = self._fail(EMAIL)
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.data["error"]["code"], "INVALID_CREDENTIALS")
 
     def test_failures_are_per_username(self):
         other = "other@trazeiq.io"
-        self.client.post(
-            "/api/v1/auth/register/request-otp/",
-            {"email": other},
-            format="json",
-        )
-        verified = self.client.post(
-            "/api/v1/auth/register/verify-otp/",
-            {"email": other, "otp": "000000"},
-            format="json",
-        )
-        self.client.post(
-            "/api/v1/auth/register/complete/",
-            {
-                "registration_token": verified.data["data"]["registration_token"],
-                "password": PASSWORD,
-                "confirm_password": PASSWORD,
-            },
-            format="json",
-        )
+        _register(self.client, other, "other_trazeiq")
         for _ in range(3):
-            self.client.post(
-                "/api/v1/auth/login/",
-                {"email": EMAIL, "password": "WrongPass!"},
-                format="json",
-            )
+            self._fail(EMAIL)
         self.client.post(
             "/api/v1/auth/login/",
-            {"email": EMAIL, "password": PASSWORD},
+            {"identifier": EMAIL, "password": PASSWORD},
             format="json",
         )
 
         # The other account is unaffected by EMAIL's lockout.
         response = self.client.post(
             "/api/v1/auth/login/",
-            {"email": other, "password": PASSWORD},
+            {"identifier": other, "password": PASSWORD},
             format="json",
         )
         self.assertEqual(response.status_code, 200)

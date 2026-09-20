@@ -3,6 +3,7 @@ from rest_framework.test import APIClient
 from django.test import TestCase, override_settings
 
 from apps.accounts.models import User
+from apps.accounts.validators import validate_username
 
 
 @override_settings(GOOGLE_CLIENT_ID="")
@@ -22,6 +23,12 @@ class GoogleAuthTests(TestCase):
         self.assertTrue(user.email_verified)
         self.assertTrue(user.is_active)
         self.assertIn("trazeiq_refresh", response.cookies)
+        # Auto-derived handle is present, valid, and exposed.
+        self.assertTrue(user.username)
+        validate_username(user.username)
+        self.assertEqual(
+            response.data["data"]["user"]["username"], user.username
+        )
 
     def test_google_stub_second_call_logs_in_same_user(self):
         self.client.post("/api/v1/auth/google/", {"email": "g@trazeiq.io"}, format="json")
@@ -31,3 +38,21 @@ class GoogleAuthTests(TestCase):
         self.assertEqual(second.status_code, 200)
         count = User.objects.filter(email="g@trazeiq.io").count()
         self.assertEqual(count, 1)
+
+    def test_google_usernames_collide_with_suffix(self):
+        self.client.post(
+            "/api/v1/auth/google/",
+            {"email": "sam@trazeiq.io", "name": "Sam"},
+            format="json",
+        )
+        self.client.post(
+            "/api/v1/auth/google/",
+            {"email": "sam@example.io", "name": "Sam"},
+            format="json",
+        )
+        usernames = set(
+            User.objects.filter(
+                email__in=["sam@trazeiq.io", "sam@example.io"]
+            ).values_list("username", flat=True)
+        )
+        self.assertEqual(len(usernames), 2)

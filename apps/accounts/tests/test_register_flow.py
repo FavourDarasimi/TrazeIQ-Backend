@@ -12,6 +12,7 @@ from django.test import TestCase, override_settings
 from apps.accounts.models import OTPCode, OTPPurpose, RegistrationToken, User
 
 EMAIL = "dev@trazeiq.io"
+USERNAME = "dev_trazeiq"
 PASSWORD = "fdsK9Qop21z!"
 
 
@@ -32,21 +33,26 @@ class RegistrationFlowTests(TestCase):
             format="json",
         )
 
-    def complete(self, token, password=PASSWORD, confirm=PASSWORD):
+    def complete(
+        self, token, password=PASSWORD, confirm=PASSWORD, username=USERNAME
+    ):
         return self.client.post(
             "/api/v1/auth/register/complete/",
             {
                 "registration_token": token,
+                "username": username,
                 "password": password,
                 "confirm_password": confirm,
             },
             format="json",
         )
 
-    def full_register(self, email=EMAIL):
+    def full_register(self, email=EMAIL, username=USERNAME):
         self.request_code(email)
         verified = self.verify_code(email)
-        return self.complete(verified.data["data"]["registration_token"])
+        return self.complete(
+            verified.data["data"]["registration_token"], username=username
+        )
 
     @override_settings(AUTH_DEV_OTP="000000")
     def test_request_otp_creates_no_user_and_emails_code(self):
@@ -145,6 +151,7 @@ class RegistrationFlowTests(TestCase):
         self.assertTrue(user.is_active)
         self.assertTrue(user.email_verified)
         self.assertEqual(user.auth_provider, "email")
+        self.assertEqual(user.username, USERNAME)
         token = RegistrationToken.objects.get(email=EMAIL)
         self.assertIsNotNone(token.used_at)
         self.assertNotIn("access", response.data)
@@ -153,6 +160,7 @@ class RegistrationFlowTests(TestCase):
         self.assertEqual(
             response.data["data"]["user"]["email_verified"], True
         )
+        self.assertEqual(response.data["data"]["user"]["username"], USERNAME)
 
     @override_settings(AUTH_DEV_OTP="000000")
     def test_complete_rejects_replayed_token(self):
@@ -212,6 +220,7 @@ class RegistrationFlowTests(TestCase):
             password=PASSWORD,
             email_verified=True,
             is_active=True,
+            username=USERNAME,
         )
         response = self.complete(verified.data["data"]["registration_token"])
         self.assertEqual(response.status_code, 409)
@@ -220,9 +229,36 @@ class RegistrationFlowTests(TestCase):
     @override_settings(AUTH_DEV_OTP="000000")
     def test_completed_account_can_log_in_with_chosen_password(self):
         self.full_register()
-        login = self.client.post(
-            "/api/v1/auth/login/",
-            {"email": EMAIL, "password": PASSWORD},
-            format="json",
+        for identifier in (EMAIL, USERNAME):
+            with self.subTest(identifier=identifier):
+                login = self.client.post(
+                    "/api/v1/auth/login/",
+                    {"identifier": identifier, "password": PASSWORD},
+                    format="json",
+                )
+                self.assertEqual(login.status_code, 200)
+
+    @override_settings(AUTH_DEV_OTP="000000")
+    def test_complete_conflicts_on_taken_username(self):
+        self.full_register()
+        other = "other@trazeiq.io"
+        self.request_code(other)
+        verified = self.verify_code(other)
+        response = self.complete(
+            verified.data["data"]["registration_token"], username=USERNAME
         )
-        self.assertEqual(login.status_code, 200)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["error"]["code"], "USERNAME_TAKEN")
+        self.assertFalse(User.objects.filter(email=other).exists())
+
+    @override_settings(AUTH_DEV_OTP="000000")
+    def test_complete_rejects_invalid_username(self):
+        self.request_code()
+        verified = self.verify_code()
+        response = self.complete(
+            verified.data["data"]["registration_token"], username="Bad Name!"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["error"]["code"], "VALIDATION_FAILED")
+        self.assertIn("username", response.data["error"]["fields"])
+        self.assertFalse(User.objects.filter(email=EMAIL).exists())

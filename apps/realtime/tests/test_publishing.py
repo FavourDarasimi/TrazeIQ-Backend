@@ -26,7 +26,10 @@ PASSWORD = "Password123!"
 class PusherPublishingTestCase(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(
-            email="owner@example.com", password=PASSWORD, email_verified=True
+            email="owner@example.com",
+            password=PASSWORD,
+            email_verified=True,
+            username="owner_example",
         )
         self.org = Organization.objects.create(name="Acme Inc", owner=self.user)
         Membership.objects.create(
@@ -102,7 +105,10 @@ class PusherPublishingTestCase(TestCase):
 
     def test_resolve_foreign_incident_is_404(self):
         other = User.objects.create_user(
-            email="intruder@example.com", password=PASSWORD, email_verified=True
+            email="intruder@example.com",
+            password=PASSWORD,
+            email_verified=True,
+            username="intruder_example",
         )
         other_org = Organization.objects.create(name="Intruder", owner=other)
         Membership.objects.create(

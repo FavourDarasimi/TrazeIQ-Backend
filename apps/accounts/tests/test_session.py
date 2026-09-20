@@ -4,6 +4,7 @@ from django.core.cache import cache
 from django.test import TestCase
 
 EMAIL = "dev@trazeiq.io"
+USERNAME = "dev_trazeiq"
 PASSWORD = "fdsK9Qop21z!"
 
 
@@ -30,6 +31,7 @@ class SessionTests(TestCase):
             "/api/v1/auth/register/complete/",
             {
                 "registration_token": verified.data["data"]["registration_token"],
+                "username": USERNAME,
                 "password": PASSWORD,
                 "confirm_password": PASSWORD,
             },
@@ -37,7 +39,7 @@ class SessionTests(TestCase):
         )
         self.login = self.client.post(
             "/api/v1/auth/login/",
-            {"email": EMAIL, "password": PASSWORD},
+            {"identifier": EMAIL, "password": PASSWORD},
             format="json",
         )
 

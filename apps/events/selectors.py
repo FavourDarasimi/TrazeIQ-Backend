@@ -1,4 +1,5 @@
 import datetime
+import re
 from uuid import UUID
 
 from django.db.models import Q
@@ -22,6 +23,10 @@ def list_events_for_user(
     service=None,
     date=None,
     search=None,
+    user_id=None,
+    release=None,
+    tag=None,
+    project_id: UUID | None = None,
 ):
     qs = _events_for_user(user)
     if level:
@@ -32,6 +37,35 @@ def list_events_for_user(
         qs = qs.filter(service__icontains=service)
     if date:
         qs = qs.filter(created_at__date=date)
+    if user_id:
+        qs = qs.filter(user_id__icontains=user_id)
+    if release:
+        qs = qs.filter(
+            Q(metadata__release__icontains=release)
+            | Q(metadata__version__icontains=release)
+            | Q(metadata__app_version__icontains=release)
+        )
+    if tag:
+        if ":" in tag:
+            raw_key, _, raw_val = tag.partition(":")
+            clean_key = re.sub(r"[^a-zA-Z0-9_\-]", "", raw_key.strip())
+            val = raw_val.strip()
+            if clean_key and val:
+                qs = qs.filter(
+                    Q(**{f"metadata__{clean_key}__icontains": val})
+                    | Q(**{f"metadata__tags__{clean_key}__icontains": val})
+                )
+            elif clean_key:
+                qs = qs.filter(
+                    Q(**{f"metadata__{clean_key}__isnull": False})
+                    | Q(**{f"metadata__tags__{clean_key}__isnull": False})
+                )
+            else:
+                qs = qs.filter(metadata__icontains=tag)
+        else:
+            qs = qs.filter(metadata__icontains=tag)
+    if project_id is not None:
+        qs = qs.filter(project_id=project_id)
     if search:
         qs = qs.filter(
             Q(message__icontains=search)
@@ -39,6 +73,7 @@ def list_events_for_user(
             | Q(service__icontains=search)
             | Q(environment__icontains=search)
             | Q(endpoint__icontains=search)
+            | Q(user_id__icontains=search)
         )
     # Newest first — the log-stream convention; the tiebreaker keeps the
     # order deterministic for pagination.

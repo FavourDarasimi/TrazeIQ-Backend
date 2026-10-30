@@ -347,8 +347,24 @@ class EventTenantIsolationTests(TestCase):
 
 class EventListFilterTests(IngestSetupMixin, TestCase):
     def _seed(self):
-        self.ingest(payload={"message": "A", "level": "error", "environment": "prod"})
-        self.ingest(payload={"message": "B", "level": "warning", "environment": "staging"})
+        self.ingest(
+            payload={
+                "message": "A",
+                "level": "error",
+                "environment": "prod",
+                "user_id": "usr_100",
+                "metadata": {"release": "v1.0.0", "tier": "gold"},
+            }
+        )
+        self.ingest(
+            payload={
+                "message": "B",
+                "level": "warning",
+                "environment": "staging",
+                "user_id": "usr_200",
+                "metadata": {"release": "v2.0.0", "tier": "free"},
+            }
+        )
 
     def test_filter_by_level(self):
         self._seed()
@@ -357,10 +373,43 @@ class EventListFilterTests(IngestSetupMixin, TestCase):
         messages = {e["message"] for e in response.data["data"]["events"]}
         self.assertEqual(messages, {"B"})
 
+    def test_filter_by_user_id(self):
+        self._seed()
+        response = self.client.get("/api/v1/events/?user_id=usr_100")
+        self.assertEqual(response.status_code, 200)
+        messages = {e["message"] for e in response.data["data"]["events"]}
+        self.assertEqual(messages, {"A"})
+
+    def test_filter_by_release(self):
+        self._seed()
+        response = self.client.get("/api/v1/events/?release=v2.0.0")
+        self.assertEqual(response.status_code, 200)
+        messages = {e["message"] for e in response.data["data"]["events"]}
+        self.assertEqual(messages, {"B"})
+
+    def test_filter_by_tag_key_value(self):
+        self._seed()
+        response = self.client.get("/api/v1/events/?tag=tier:gold")
+        self.assertEqual(response.status_code, 200)
+        messages = {e["message"] for e in response.data["data"]["events"]}
+        self.assertEqual(messages, {"A"})
+
+    def test_filter_by_tag_substring(self):
+        self._seed()
+        response = self.client.get("/api/v1/events/?tag=free")
+        self.assertEqual(response.status_code, 200)
+        messages = {e["message"] for e in response.data["data"]["events"]}
+        self.assertEqual(messages, {"B"})
+
     def test_invalid_date_is_400(self):
         response = self.client.get("/api/v1/events/?date=not-a-date")
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["error"]["code"], "INVALID_DATE")
+
+    def test_invalid_project_id_is_400(self):
+        response = self.client.get("/api/v1/events/?project_id=not-a-uuid")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["error"]["code"], "INVALID_PROJECT_ID")
 
 
 class EventListSearchAndPaginationTests(IngestSetupMixin, TestCase):

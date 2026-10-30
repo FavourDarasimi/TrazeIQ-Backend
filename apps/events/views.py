@@ -126,9 +126,10 @@ class EventIngestAndListView(APIView):
         summary="List events",
         description=(
             "Events from every project in the caller's organizations, "
-            "newest first. Filter by level, environment, service, ISO date "
-            "or a free-text search (message, fingerprint, service, "
-            "environment, endpoint), and paginate with page / page_size."
+            "newest first. Filter by level, environment, service, ISO date, "
+            "user ID, release, custom tags, project ID, or a free-text search "
+            "(message, fingerprint, service, environment, endpoint, user ID), "
+            "and paginate with page / page_size."
         ),
         parameters=[
             inline_serializer(
@@ -138,6 +139,10 @@ class EventIngestAndListView(APIView):
                     "environment": serializers.CharField(required=False),
                     "service": serializers.CharField(required=False),
                     "date": serializers.DateField(required=False),
+                    "user_id": serializers.CharField(required=False),
+                    "release": serializers.CharField(required=False),
+                    "tag": serializers.CharField(required=False),
+                    "project_id": serializers.UUIDField(required=False),
                     "search": serializers.CharField(required=False),
                     "page": serializers.IntegerField(required=False),
                     "page_size": serializers.IntegerField(required=False),
@@ -180,6 +185,15 @@ class EventIngestAndListView(APIView):
                 "INVALID_DATE", "date must be YYYY-MM-DD.",
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        project_id = None
+        if query.get("project_id"):
+            try:
+                project_id = UUID(query["project_id"])
+            except ValueError:
+                return api_error(
+                    "INVALID_PROJECT_ID", "project_id must be a valid UUID.",
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         page, page_size = _parse_pagination(query)
 
         events = list_events_for_user(
@@ -189,6 +203,10 @@ class EventIngestAndListView(APIView):
             service=query.get("service"),
             date=date_filter,
             search=query.get("search"),
+            user_id=query.get("user_id"),
+            release=query.get("release"),
+            tag=query.get("tag"),
+            project_id=project_id,
         )
         total = events.count()
         start = (page - 1) * page_size

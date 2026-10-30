@@ -6,7 +6,9 @@ from trazeiq_backend.models import UUIDModel
 
 
 class AuditAction(models.TextChoices):
+    KEY_CREATED = "key_created", "API key created"
     KEY_ROTATED = "key_rotated", "API key rotated"
+    KEY_REVOKED = "key_revoked", "API key revoked"
     MEMBER_REMOVED = "member_removed", "Member removed"
     INCIDENT_RESOLVED = "incident_resolved", "Incident resolved"
     INCIDENTS_BULK_UPDATED = "incidents_bulk_updated", "Incidents bulk updated"

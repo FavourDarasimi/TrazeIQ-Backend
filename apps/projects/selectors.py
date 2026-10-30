@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from .models import Project
+from .models import Project, ProjectApiKey
 
 
 def list_projects_for_user(user):
@@ -23,3 +23,19 @@ def get_project_for_user(project_id: UUID, user):
         .distinct()
         .first()
     )
+
+
+def list_project_api_keys(project_id: UUID, user):
+    """All API keys for a project accessible by user."""
+    project = get_project_for_user(project_id, user)
+    if project is None:
+        return ProjectApiKey.objects.none()
+    return project.api_keys.all()
+
+
+def get_project_api_key(project_id: UUID, key_id: UUID, user):
+    """A specific API key for a project accessible by user."""
+    project = get_project_for_user(project_id, user)
+    if project is None:
+        return None
+    return project.api_keys.filter(id=key_id).first()

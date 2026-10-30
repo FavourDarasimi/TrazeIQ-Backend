@@ -11,7 +11,7 @@ from .models import Project
 
 class ProjectRolePermission(OrgRolePermission):
     def get_org_id_from_view(self, request, view) -> UUID | None:
-        project_id = view.kwargs.get("pk")
+        project_id = view.kwargs.get("project_id") or view.kwargs.get("pk")
         if project_id is None:
             return None
         return (

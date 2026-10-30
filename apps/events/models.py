@@ -1,3 +1,4 @@
+from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 
 from trazeiq_backend.models import UUIDModel
@@ -82,6 +83,10 @@ class Event(UUIDModel):
             models.Index(
                 fields=["project", "created_at"],
                 name="idx_event_project_created",
+            ),
+            GinIndex(
+                fields=["metadata"],
+                name="idx_event_metadata_gin",
             ),
         ]
 

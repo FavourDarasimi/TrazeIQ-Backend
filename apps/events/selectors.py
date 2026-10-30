@@ -4,6 +4,8 @@ from uuid import UUID
 
 from django.db.models import Q
 
+from apps.platform.search_parser import build_event_search_q
+
 from .models import ErrorGroup, Event
 
 
@@ -67,14 +69,9 @@ def list_events_for_user(
     if project_id is not None:
         qs = qs.filter(project_id=project_id)
     if search:
-        qs = qs.filter(
-            Q(message__icontains=search)
-            | Q(fingerprint__icontains=search)
-            | Q(service__icontains=search)
-            | Q(environment__icontains=search)
-            | Q(endpoint__icontains=search)
-            | Q(user_id__icontains=search)
-        )
+        search_q = build_event_search_q(search[:300])
+        if search_q:
+            qs = qs.filter(search_q)
     # Newest first — the log-stream convention; the tiebreaker keeps the
     # order deterministic for pagination.
     return qs.select_related("project", "error_group").order_by(

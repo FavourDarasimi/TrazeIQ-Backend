@@ -6,6 +6,7 @@ from uuid import UUID
 from django.db.models import OuterRef, Q, QuerySet, Subquery
 
 from apps.events.models import Event
+from apps.platform.search_parser import build_incident_search_q
 
 from .models import Incident, TimelineEntry
 
@@ -59,14 +60,9 @@ def list_incidents_for_user(
     if project_id:
         qs = qs.filter(project_id=project_id)
     if search:
-        term = search.strip()[:200]
-        if term:
-            qs = qs.filter(
-                Q(error_group__title__icontains=term)
-                | Q(error_group__events__message__icontains=term)
-                | Q(error_group__events__service__icontains=term)
-                | Q(error_group__events__endpoint__icontains=term)
-            ).distinct()
+        search_q = build_incident_search_q(search[:300])
+        if search_q:
+            qs = qs.filter(search_q).distinct()
     return _with_latest_event(qs).order_by("-error_group__last_seen")
 
 

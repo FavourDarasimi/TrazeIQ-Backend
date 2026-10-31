@@ -38,6 +38,19 @@ class InviteInputSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=INVITABLE_ROLES)
 
 
+class DirectInviteInputSerializer(serializers.Serializer):
+    """POST /api/v1/invites/ body — issue an invite specifying organization, email, and role."""
+
+    organization = serializers.UUIDField(required=True)
+    email = serializers.EmailField(required=True)
+    role = serializers.ChoiceField(choices=INVITABLE_ROLES, required=True)
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict) and "organization_id" in data and "organization" not in data:
+            data = {**data, "organization": data["organization_id"]}
+        return super().to_internal_value(data)
+
+
 class InviteOutputSerializer(serializers.ModelSerializer):
     class Meta:
         model = Invite

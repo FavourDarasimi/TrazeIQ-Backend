@@ -58,12 +58,33 @@ class InviteFlowTests(TestCase):
         self.assertEqual(membership_data["role"], "developer")
         self.assertEqual(membership_data["organization"]["id"], self.org_id)
 
-        membership = Membership.objects.get(user__email="teammate@trazeiq.io")
+    def test_direct_invite_endpoint_creates_invite_and_can_be_accepted(self):
+        response = self.owner.post(
+            "/api/v1/invites/",
+            {
+                "organization": self.org_id,
+                "email": "direct@trazeiq.io",
+                "role": "developer",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        raw_token = response.data["data"]["invite_token"]
+        self.assertEqual(response.data["data"]["invite"]["email"], "direct@trazeiq.io")
+
+        # Invitee accepts
+        invitee = APIClient()
+        register_and_login(invitee, "direct@trazeiq.io")
+        accept_res = accept(invitee, raw_token)
+        self.assertEqual(accept_res.status_code, 201)
+        self.assertEqual(accept_res.data["data"]["membership"]["role"], "developer")
+
+        membership = Membership.objects.get(user__email="direct@trazeiq.io")
         self.assertEqual(str(membership.organization_id), self.org_id)
         self.assertEqual(membership.role, MembershipRole.DEVELOPER)
 
         # Token is single-use — a replay is rejected.
-        replayed = accept(teammate, raw_token)
+        replayed = accept(invitee, raw_token)
         self.assertEqual(replayed.status_code, 400)
         self.assertEqual(replayed.data["error"]["code"], "INVITE_USED")
 

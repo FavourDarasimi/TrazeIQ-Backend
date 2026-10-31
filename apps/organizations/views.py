@@ -19,6 +19,7 @@ from .selectors import (
     list_pending_invites,
 )
 from .serializers import (
+    DirectInviteInputSerializer,
     InviteInputSerializer,
     InviteOutputSerializer,
     MembershipAcceptOutputSerializer,
@@ -271,6 +272,75 @@ class OrganizationInviteView(APIView):
         result = create_invite(
             email=serializer.validated_data["email"],
             role=serializer.validated_data["role"],
+            organization=organization,
+            invited_by=request.user,
+        )
+        if result is None:
+            return api_error(
+                ErrorCode.ALREADY_MEMBER,
+                "This address is already a member of the organization.",
+                status=status.HTTP_409_CONFLICT,
+            )
+        invite, raw_token = result
+        return api_success(
+            data={
+                "invite": InviteOutputSerializer(invite).data,
+                "invite_token": raw_token,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class DirectInviteView(APIView):
+    """POST /api/v1/invites/ — issue an invite specifying organization, email, and role.
+
+    Provides a clean top-level invite endpoint aliasing ``/api/v1/organizations/{id}/invite/``.
+    """
+
+    permission_classes = [IsAuthenticated, IsOrgOwnerOrAdmin]
+
+    def get_permission_org_id(self, request):
+        return request.data.get("organization") or request.data.get("organization_id")
+
+    @extend_schema(
+        tags=["invites"],
+        operation_id="invites_create",
+        summary="Issue a team invite",
+        description=(
+            "Issue a pending invite for an email address with the given role and organization. "
+            "Returns the raw invite token exactly once; only its hash is stored."
+        ),
+        request=DirectInviteInputSerializer,
+        responses={
+            201: envelope_schema(
+                "InviteCreateOk",
+                payload=inline_serializer(
+                    "InviteCreateData",
+                    fields={
+                        "invite": InviteOutputSerializer(),
+                        "invite_token": serializers.CharField(),
+                    },
+                ),
+            ),
+            400: envelope_schema("InviteCreateValidation", error=True),
+            401: envelope_schema("InviteCreateUnauthorized", error=True),
+            403: envelope_schema("InviteCreateForbidden", error=True),
+            404: envelope_schema("InviteCreateNotFound", error=True),
+            409: envelope_schema("InviteCreateConflict", error=True),
+        },
+    )
+    def post(self, request):
+        serializer = DirectInviteInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        organization = get_organization_for_user(data["organization"], request.user)
+        if organization is None:
+            raise NotFound(ORG_NOT_FOUND)
+
+        result = create_invite(
+            email=data["email"],
+            role=data["role"],
             organization=organization,
             invited_by=request.user,
         )

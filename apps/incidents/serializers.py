@@ -152,14 +152,34 @@ class TimelineEntryOutputSerializer(serializers.Serializer):
 
 
 class CommentInputSerializer(serializers.Serializer):
-    """POST /api/incidents/{id}/comments/ body — just the comment text."""
+    """POST /api/incidents/{id}/comments/ body — comment text.
+
+    Accepts either ``content`` (primary) or ``body`` (alias) for developer convenience.
+    """
 
     content = serializers.CharField(
-        required=True,
+        required=False,
         allow_blank=False,
         trim_whitespace=True,
         max_length=5000,
     )
+    body = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        trim_whitespace=True,
+        max_length=5000,
+        write_only=True,
+    )
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict) and "body" in data and "content" not in data:
+            data = {**data, "content": data["body"]}
+        return super().to_internal_value(data)
+
+    def validate(self, attrs):
+        if not attrs.get("content"):
+            raise serializers.ValidationError({"content": ["This field is required."]})
+        return attrs
 
 
 class BulkUpdateSerializer(serializers.Serializer):

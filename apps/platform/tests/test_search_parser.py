@@ -252,3 +252,18 @@ class SearchParserEventIntegrationTests(TestCase):
         qs = list_events_for_user(self.user, search="-level:fatal")
         self.assertEqual(list(qs), [self.event2])
 
+    def test_punctuation_only_search_returns_empty_results(self):
+        from apps.events.selectors import list_events_for_user
+
+        qs = list_events_for_user(self.user, search="!@#$%^&*()")
+        self.assertEqual(list(qs), [])
+
+        qs_qmark = list_events_for_user(self.user, search="???")
+        self.assertEqual(list(qs_qmark), [])
+
+        # Incidents test
+        from apps.incidents.selectors import list_incidents_for_user
+
+        inc_qs = list_incidents_for_user(self.user, search="!@#$%^&*()")
+        self.assertEqual(list(inc_qs), [])
+

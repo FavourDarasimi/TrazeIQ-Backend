@@ -87,12 +87,23 @@ _INCIDENT_STATUSES = {"open", "investigating", "resolved", "ignored"}
 _INCIDENT_SEVERITIES = {"critical", "high", "medium", "low"}
 _EVENT_LEVELS = {"fatal", "error", "warning", "info", "debug"}
 
+_EMPTY_MATCH_Q = Q(pk__in=[])
+
 
 def build_incident_search_q(query: str | None) -> Q:
     """Convert a tokenized query string into a Django Q filter for Incident."""
+    if not query or not query.strip():
+        return Q()
+
+    # If the user typed a non-empty search query that contains no alphanumeric
+    # characters (e.g. punctuation-only queries like "!@#$%^&*()"), return an empty match
+    # so that it does not falsely match all records or invert to an unfiltered match.
+    if not re.search(r"[a-zA-Z0-9]", query):
+        return _EMPTY_MATCH_Q
+
     tokens = parse_search_query(query)
     if not tokens:
-        return Q()
+        return _EMPTY_MATCH_Q
 
     root_q = Q()
 
@@ -207,9 +218,18 @@ def _incident_free_text_q(term: str) -> Q:
 
 def build_event_search_q(query: str | None) -> Q:
     """Convert a tokenized query string into a Django Q filter for Event."""
+    if not query or not query.strip():
+        return Q()
+
+    # If the user typed a non-empty search query that contains no alphanumeric
+    # characters (e.g. punctuation-only queries like "!@#$%^&*()"), return an empty match
+    # so that it does not falsely match all records or invert to an unfiltered match.
+    if not re.search(r"[a-zA-Z0-9]", query):
+        return _EMPTY_MATCH_Q
+
     tokens = parse_search_query(query)
     if not tokens:
-        return Q()
+        return _EMPTY_MATCH_Q
 
     root_q = Q()
 

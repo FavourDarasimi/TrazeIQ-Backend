@@ -9,6 +9,11 @@ app_name = "invites"
 
 urlpatterns = [
     path(
+        "",
+        views.DirectInviteView.as_view(),
+        name="create",
+    ),
+    path(
         "<token>/accept/",
         views.InviteAcceptView.as_view(),
         name="accept",

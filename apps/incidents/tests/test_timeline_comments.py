@@ -129,6 +129,16 @@ class CommentTests(IncidentSetupMixin, TestCase):
         self.assertEqual(comments[0]["content"], "Looking into this now")
         self.assertEqual(comments[0]["actor_email"], "dev@trazeiq.io")
 
+    def test_comment_with_body_alias(self):
+        response = self.client.post(
+            f"/api/v1/incidents/{self.incident_id}/comments/",
+            {"body": "DB pool saturated"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        entry = response.data["data"]["entry"]
+        self.assertEqual(entry["content"], "DB pool saturated")
+
     def test_comment_requires_content(self):
         for payload in ({}, {"content": ""}, {"content": "   "}):
             response = self.client.post(

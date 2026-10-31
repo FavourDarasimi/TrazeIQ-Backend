@@ -306,7 +306,17 @@ SIMPLE_JWT = {
 
 # ---- CORS (baseline — locked per-env, hardened again in Phase 5) ----
 CORS_ALLOWED_ORIGINS = env.list(
-    "DJANGO_CORS_ALLOWED_ORIGINS", default=["http://localhost:3000"]
+    "DJANGO_CORS_ALLOWED_ORIGINS",
+    default=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:3002",
+        "http://localhost:3003",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "http://127.0.0.1:3002",
+        "http://127.0.0.1:3003",
+    ],
 )
 CORS_ALLOW_CREDENTIALS = True  # refresh-token cookie flows
 CORS_ALLOW_ALL_ORIGINS = False

@@ -53,6 +53,142 @@ _WS_RE = re.compile(r"\s+")
 # must not create separate fingerprints — strip the whole header value.
 _PROBE_HEADER_RE = re.compile(r"\s+X-Traze-Test=\S+", re.IGNORECASE)
 
+_CHUNK_HASH_RE = re.compile(
+    r"([a-zA-Z0-9_\-]+?)-[a-f0-9]{5,64}(\.(?:js|mjs|cjs|css|map))(?:\?.*)?$",
+    re.IGNORECASE,
+)
+
+_VENDOR_PATTERNS = [
+    # node_modules
+    re.compile(r"(?:^|[\\/])node_modules[\\/]"),
+    # Python site-packages / dist-packages
+    re.compile(r"(?:^|[\\/])(?:site-packages|dist-packages)[\\/]"),
+    # Python stdlib
+    re.compile(r"(?:^|[\\/])lib[\\/]python\d+\.\d+[\\/]"),
+    re.compile(r"^<frozen\s+", re.IGNORECASE),
+    re.compile(r"^<built-in\s+", re.IGNORECASE),
+    # Node.js stdlib
+    re.compile(r"^node:"),
+    re.compile(r"(?:^|[\\/])node:internal[\\/]"),
+    # Next.js internals and chunks
+    re.compile(r"(?:^|[\\/])next[\\/]dist[\\/]"),
+    re.compile(r"(?:^|[\\/])\.(?:next|output)[\\/]"),
+    re.compile(r"(?:^|[\\/])_next[\\/]static[\\/]chunks[\\/]"),
+    re.compile(
+        r"(?:^|[\\/])chunks[\\/](?:main|framework|webpack|app-pages-internals|[0-9]+-[a-f0-9]+)"
+    ),
+]
+
+PY_FRAME_RE = re.compile(
+    r'^\s*File\s+["\']([^"\']+)["\'],\s*(?:line\s+(\d+))?(?:,\s*in\s+(.+))?',
+    re.IGNORECASE,
+)
+JS_FRAME_RE = re.compile(
+    r'^\s*at\s+(?:(.+?)\s+\((.+?)\)|(.+))',
+    re.IGNORECASE,
+)
+
+
+def clean_protocol(path: str) -> str:
+    """Strip bundler protocol prefixes such as webpack-internal:/// or webpack://."""
+    path = re.sub(r"^webpack-internal:\/\/\/?(?:\([^\)]+\)\/)?", "", path)
+    path = re.sub(r"^webpack:\/\/\/?(?:[^\/]+\/)?", "", path)
+    return path
+
+
+def normalize_chunk_filename(path: str) -> str:
+    """Normalize filenames by stripping protocol wrappers, query parameters,
+    and chunk content hashes (e.g. main-4f81b.js -> main.js).
+    """
+    if not path:
+        return ""
+    path = path.split("?")[0].replace("\\", "/")
+    path = clean_protocol(path)
+    return _CHUNK_HASH_RE.sub(r"\1\2", path)
+
+
+def is_in_app_frame(filename: str = "", frame_text: str = "") -> bool:
+    """Determine whether a stack frame belongs to user application code or
+    runtime / vendor / framework code (node_modules, site-packages, stdlib,
+    Next.js chunks).
+    """
+    clean_fn = clean_protocol(filename or "").replace("\\", "/")
+    clean_txt = clean_protocol(frame_text or "").replace("\\", "/")
+    for pat in _VENDOR_PATTERNS:
+        if clean_fn and pat.search(clean_fn):
+            return False
+        if clean_txt and pat.search(clean_txt):
+            return False
+    return True
+
+
+def parse_stacktrace_frames(stacktrace: str) -> list[dict]:
+    """Parse a stacktrace string into a structured list of frame dictionaries."""
+    frames: list[dict] = []
+    lines = (stacktrace or "").splitlines()
+    has_py_frames = any(PY_FRAME_RE.match(line.strip()) for line in lines)
+    has_js_frames = any(JS_FRAME_RE.match(line.strip()) for line in lines)
+
+    for line in lines:
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("Traceback (") or "<module>" in s.lower():
+            continue
+
+        # Python frame: File "...", line 123, in foo
+        m_py = PY_FRAME_RE.match(s)
+        if m_py:
+            fn, lno, func = m_py.groups()
+            fn_clean = normalize_chunk_filename(fn)
+            frames.append({
+                "filename": fn_clean,
+                "function": func or "",
+                "lineno": int(lno) if lno and lno.isdigit() else None,
+                "in_app": is_in_app_frame(filename=fn),
+                "raw": s,
+            })
+            continue
+
+        # JavaScript frame: at foo (path:line:col) or at path:line:col
+        m_js = JS_FRAME_RE.match(s)
+        if m_js:
+            func1, loc1, loc2 = m_js.groups()
+            func = func1 or ""
+            raw_loc = loc1 or loc2 or ""
+            # Strip :line:col
+            loc_without_line = re.sub(
+                r":\d+(?::\d+)?(?=[\)\s]|$)", "", raw_loc
+            ).strip()
+            fn_clean = normalize_chunk_filename(loc_without_line)
+            frames.append({
+                "filename": fn_clean,
+                "function": func,
+                "lineno": None,
+                "in_app": is_in_app_frame(filename=loc_without_line),
+                "raw": s,
+            })
+            continue
+
+        # If the traceback is recognized as Python or JS, skip source code lines or error headers
+        if has_py_frames or has_js_frames:
+            continue
+
+        # Generic line fallback (strip line numbers and check in_app)
+        clean_line = re.sub(r":\d+(?::\d+)?(?=[\)\s]|$)", "", s)
+        clean_line = re.sub(
+            r",?\s*\bline\s*[#:=]?\s*\d+", "", clean_line, flags=re.IGNORECASE
+        )
+        norm_line = normalize_chunk_filename(clean_line)
+        frames.append({
+            "filename": norm_line,
+            "function": "",
+            "lineno": None,
+            "in_app": is_in_app_frame(filename=clean_line, frame_text=s),
+            "raw": s,
+        })
+    return frames
+
 
 def _normalize(text: str) -> str:
     text = _ADDRESS_RE.sub("0xADDR", text)
@@ -66,29 +202,69 @@ def _normalize(text: str) -> str:
     return text.strip().lower()
 
 
-def fingerprint(*, message: str, stacktrace: str = "") -> str:
-    """Deterministic signature for one error pattern, independent of line
-    numbers, memory addresses and UUIDs.
+def fingerprint(
+    *,
+    message: str,
+    stacktrace: str = "",
+    frames: list[dict] | None = None,
+    version: int = 2,
+    top_n: int = 5,
+) -> str:
+    """Deterministic signature for one error pattern.
 
-    Normalizes both ``file.py:21``-style (``:N``) and ``line 21``-style
-    (``line N``) numbers. Module-level entry frames (``in <module>``) are
-    ignored so the same error called from different entry-point lines does
-    not split into separate groups. Built from the normalized first message
-    line (the error type) plus the top five normalized stack frames — the
-    parts that identify the pattern without the noise that varies per
-    occurrence.
-
-    Known limitation: JS stacks that differ by wrapper depth (an extra
-    ``at ...`` frame in the middle) still fingerprint differently — the
-    frames genuinely differ, so they are treated as distinct patterns.
+    Supports algorithm version 1 (legacy: top 5 raw frames normalized with :N)
+    and version 2 (in-app frame filtering, chunk hash normalization, line-number
+    immunity, and fallback to all frames if none are in-app).
     """
-    frames = [
-        line.strip()
-        for line in (stacktrace or "").splitlines()
-        if line.strip() and "<module>" not in line.lower()
-    ]
-    parts = [_normalize(message.splitlines()[0])] if message else []
-    parts += [_normalize(frame) for frame in frames[:5]]
+    if version == 1:
+        raw_frames = [
+            line.strip()
+            for line in (stacktrace or "").splitlines()
+            if line.strip() and "<module>" not in line.lower()
+        ]
+        parts = [_normalize(message.splitlines()[0])] if message else []
+        parts += [_normalize(frame) for frame in raw_frames[:5]]
+        payload = "\n".join(parts)
+        return hashlib.sha256(payload.encode()).hexdigest()
+
+    # Version 2: in-app frame filtering, chunk hash stripping, line number omission
+    parsed_frames: list[dict] = []
+    if frames:
+        for f in frames:
+            fn = normalize_chunk_filename(f.get("filename", ""))
+            func = f.get("function", "")
+            in_app = f.get("in_app")
+            if in_app is None:
+                in_app = is_in_app_frame(filename=fn)
+            parsed_frames.append({
+                "filename": fn,
+                "function": func,
+                "in_app": bool(in_app),
+            })
+    elif stacktrace:
+        parsed_frames = parse_stacktrace_frames(stacktrace)
+
+    in_app_frames = [f for f in parsed_frames if f["in_app"]]
+    selected_frames = (
+        in_app_frames[:top_n] if in_app_frames else parsed_frames[:top_n]
+    )
+
+    parts = []
+    if message:
+        first_line_msg = _normalize(message.splitlines()[0])
+        if first_line_msg:
+            parts.append(first_line_msg)
+
+    for f in selected_frames:
+        fn = _normalize(f["filename"])
+        func = _normalize(f["function"])
+        if func and fn:
+            parts.append(f"{fn} in {func}")
+        elif fn:
+            parts.append(fn)
+        elif func:
+            parts.append(func)
+
     payload = "\n".join(parts)
     return hashlib.sha256(payload.encode()).hexdigest()
 

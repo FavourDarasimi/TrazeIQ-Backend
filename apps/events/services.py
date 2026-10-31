@@ -28,7 +28,7 @@ _GROUP_UPSERT_ATTEMPTS = 3
 _GROUP_UPSERT_RETRY_BASE_SECONDS = 0.05
 
 
-def _upsert_error_group(project, fp, title, now):
+def _upsert_error_group(project, fp, title, now, fingerprint_version=2):
     """Get-or-create the ErrorGroup, tolerating concurrent first-ingests."""
     for attempt in range(_GROUP_UPSERT_ATTEMPTS):
         try:
@@ -41,6 +41,7 @@ def _upsert_error_group(project, fp, title, now):
                         "count": 0,
                         "first_seen": now,
                         "last_seen": now,
+                        "fingerprint_version": fingerprint_version,
                     },
                 )
         except IntegrityError:
@@ -65,6 +66,7 @@ def _upsert_error_group(project, fp, title, now):
                 "count": 0,
                 "first_seen": now,
                 "last_seen": now,
+                "fingerprint_version": fingerprint_version,
             },
         )
 
@@ -107,6 +109,7 @@ def ingest_event(
     *,
     message: str,
     stacktrace: str = "",
+    frames: list[dict] | None = None,
     level: str = Event.Level.ERROR,
     environment: str = "",
     service: str = "",
@@ -135,11 +138,16 @@ def ingest_event(
     _start = time.monotonic()
     redacted_message = redact_secrets(message)
     redacted_stacktrace = redact_secrets(stacktrace or "")
-    fp = fingerprint(message=redacted_message, stacktrace=redacted_stacktrace)
+    fp = fingerprint(
+        message=redacted_message,
+        stacktrace=redacted_stacktrace,
+        frames=frames,
+        version=2,
+    )
     now = timezone.now()
 
     group, _group_created = _upsert_error_group(
-        project, fp, first_line(redacted_message), now
+        project, fp, first_line(redacted_message), now, fingerprint_version=2
     )
 
     ErrorGroup.objects.filter(pk=group.pk).update(
@@ -154,6 +162,10 @@ def ingest_event(
         # Best-effort inbox fan-out to the org — never fails ingestion.
         notify_incident_created(incident)
 
+    meta = dict(metadata or {})
+    if frames and "frames" not in meta:
+        meta["frames"] = frames
+
     event = Event.objects.create(
         project=project,
         error_group=group,
@@ -166,9 +178,10 @@ def ingest_event(
         request_method=request_method,
         user_id=user_id,
         ip_address=ip_address,
-        metadata=metadata or {},
+        metadata=meta,
         breadcrumbs=breadcrumbs or [],
         fingerprint=fp,
+        fingerprint_version=2,
     )
 
     # Phase 3A: push the incident lifecycle event live. Best-effort — a
@@ -193,3 +206,172 @@ def ingest_event(
     )
 
     return event
+
+
+def regroup_project_error_groups(
+    project,
+    actor=None,
+    dry_run: bool = False,
+) -> dict:
+    """Regroup all events in a project according to the v2 fingerprint algorithm.
+
+    Consolidates split error groups caused by wrapper functions, differing
+    middleware depths, or changed line numbers into canonical v2 ErrorGroups.
+    """
+    from apps.auditlog.models import AuditAction
+    from apps.auditlog.services import record_audit_log
+
+    events = list(
+        Event.objects.filter(project=project).order_by("created_at")
+    )
+    groups_before = ErrorGroup.objects.filter(project=project).count()
+    total_events = len(events)
+
+    if not events:
+        return {
+            "dry_run": dry_run,
+            "project_id": str(project.id),
+            "events_reprocessed": 0,
+            "groups_before": groups_before,
+            "groups_after": groups_before,
+            "groups_consolidated": 0,
+        }
+
+    # Map each event to its new v2 fingerprint
+    event_fp_map: dict[str, str] = {}
+    fps_to_events: dict[str, list[Event]] = {}
+    for ev in events:
+        frames = None
+        if isinstance(ev.metadata, dict):
+            frames = ev.metadata.get("frames")
+        new_fp = fingerprint(
+            message=ev.message,
+            stacktrace=ev.stacktrace,
+            frames=frames,
+            version=2,
+        )
+        event_fp_map[str(ev.id)] = new_fp
+        fps_to_events.setdefault(new_fp, []).append(ev)
+
+    groups_after = len(fps_to_events)
+    consolidated = max(0, groups_before - groups_after)
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "project_id": str(project.id),
+            "events_reprocessed": total_events,
+            "groups_before": groups_before,
+            "groups_after": groups_after,
+            "groups_consolidated": consolidated,
+        }
+
+    with transaction.atomic():
+        canonical_group_ids = []
+        for fp, group_events in fps_to_events.items():
+            first_event = group_events[0]
+            last_event = group_events[-1]
+
+            canonical_group = ErrorGroup.objects.filter(
+                project=project, fingerprint=fp
+            ).first()
+
+            if canonical_group is None:
+                canonical_group = ErrorGroup.objects.create(
+                    project=project,
+                    fingerprint=fp,
+                    fingerprint_version=2,
+                    title=first_line(first_event.message),
+                    count=len(group_events),
+                    first_seen=first_event.created_at,
+                    last_seen=last_event.created_at,
+                )
+            else:
+                canonical_group.fingerprint_version = 2
+                canonical_group.count = len(group_events)
+                canonical_group.first_seen = first_event.created_at
+                canonical_group.last_seen = last_event.created_at
+                canonical_group.save(
+                    update_fields=[
+                        "fingerprint_version",
+                        "count",
+                        "first_seen",
+                        "last_seen",
+                    ]
+                )
+
+            canonical_group_ids.append(canonical_group.id)
+
+            # Reassign events
+            event_ids = [e.id for e in group_events]
+            Event.objects.filter(id__in=event_ids).update(
+                error_group=canonical_group,
+                fingerprint=fp,
+                fingerprint_version=2,
+            )
+
+            # Gather all old groups that previously owned these events
+            old_group_ids = {
+                e.error_group_id
+                for e in group_events
+                if e.error_group_id and e.error_group_id != canonical_group.id
+            }
+
+            if old_group_ids:
+                # Merge open incidents safely (preserving uniq_open_incident_per_group)
+                open_incidents = list(
+                    Incident.objects.filter(
+                        error_group_id__in=old_group_ids | {canonical_group.id},
+                        status=Incident.Status.OPEN,
+                    ).order_by("created_at")
+                )
+
+                if open_incidents:
+                    primary_open = open_incidents[0]
+                    primary_open.error_group = canonical_group
+                    primary_open.save(update_fields=["error_group"])
+
+                    # Extra open incidents get resolved to avoid duplicate open incidents
+                    for duplicate_open in open_incidents[1:]:
+                        duplicate_open.error_group = canonical_group
+                        duplicate_open.status = Incident.Status.RESOLVED
+                        duplicate_open.resolved_at = timezone.now()
+                        duplicate_open.save(
+                            update_fields=[
+                                "error_group",
+                                "status",
+                                "resolved_at",
+                            ]
+                        )
+
+                # Reassign non-open incidents to canonical_group
+                Incident.objects.filter(
+                    error_group_id__in=old_group_ids
+                ).exclude(status=Incident.Status.OPEN).update(
+                    error_group=canonical_group
+                )
+
+        # Delete any obsolete ErrorGroups that no longer contain events
+        ErrorGroup.objects.filter(project=project).exclude(
+            id__in=canonical_group_ids
+        ).delete()
+
+        if actor:
+            record_audit_log(
+                organization=project.organization,
+                actor=actor,
+                action=AuditAction.GROUPS_REGROUPED,
+                target=(
+                    f"Project {project.name}: {consolidated} error groups "
+                    f"consolidated to fingerprint v2"
+                ),
+            )
+
+    return {
+        "dry_run": False,
+        "project_id": str(project.id),
+        "events_reprocessed": total_events,
+        "groups_before": groups_before,
+        "groups_after": len(canonical_group_ids),
+        "groups_consolidated": consolidated,
+    }

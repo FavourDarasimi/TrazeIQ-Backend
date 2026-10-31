@@ -25,6 +25,10 @@ class IsProjectMember(ProjectRolePermission):
     minimum_role = MembershipRole.VIEWER
 
 
+class IsProjectDeveloper(ProjectRolePermission):
+    minimum_role = MembershipRole.DEVELOPER
+
+
 class IsProjectOwnerOrAdmin(ProjectRolePermission):
     """Project management: create/update/delete, API-key rotation."""
 

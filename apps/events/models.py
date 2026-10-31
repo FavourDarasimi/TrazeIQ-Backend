@@ -19,6 +19,7 @@ class ErrorGroup(UUIDModel):
         related_name="error_groups",
     )
     fingerprint = models.CharField(max_length=64)
+    fingerprint_version = models.PositiveSmallIntegerField(default=2)
     title = models.CharField(max_length=255)
     count = models.PositiveIntegerField(default=0)
     first_seen = models.DateTimeField()
@@ -75,6 +76,7 @@ class Event(UUIDModel):
     metadata = models.JSONField(blank=True, default=dict)
     breadcrumbs = models.JSONField(blank=True, default=list)
     fingerprint = models.CharField(max_length=64, db_index=True)
+    fingerprint_version = models.PositiveSmallIntegerField(default=2)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -12,3 +12,9 @@ Run the suite with::
 """
 
 from .dev import *  # noqa: F401,F403
+
+# Disable external third-party calls during test runs
+PUSHER_APP_ID = ""
+PUSHER_KEY = ""
+PUSHER_SECRET = ""
+OPENROUTER_API_KEY = ""

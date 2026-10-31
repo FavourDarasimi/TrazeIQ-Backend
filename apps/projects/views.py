@@ -12,10 +12,15 @@ from apps.organizations.selectors import (
 
 from apps.auditlog.models import AuditAction
 from apps.auditlog.services import record_audit_log
+from apps.events.services import regroup_project_error_groups
 from trazeiq_backend.requests import body_as_dict
 from trazeiq_backend.responses import api_success, envelope_schema
 
-from .permissions import IsProjectMember, IsProjectOwnerOrAdmin
+from .permissions import (
+    IsProjectDeveloper,
+    IsProjectMember,
+    IsProjectOwnerOrAdmin,
+)
 from .selectors import (
     get_project_api_key,
     get_project_for_user,
@@ -323,6 +328,63 @@ class ProjectRotateKeyView(APIView):
         )
 
 
+class ProjectRegroupErrorsView(APIView):
+    """POST /api/v1/projects/{id}/regroup/ — recompute fingerprints and consolidate groups."""
+
+    permission_classes = [IsAuthenticated, IsProjectDeveloper]
+
+    @extend_schema(
+        tags=["projects"],
+        operation_id="projects_regroup_errors",
+        summary="Regroup project errors",
+        description=(
+            "Recompute fingerprint algorithm v2 for all events in the project. "
+            "Collapses noisy split groups caused by wrappers, varying middleware, "
+            "or changed line numbers into unified canonical ErrorGroups."
+        ),
+        request=inline_serializer(
+            "ProjectRegroupInput",
+            fields={
+                "dry_run": serializers.BooleanField(
+                    required=False, default=False
+                )
+            },
+        ),
+        responses={
+            200: envelope_schema(
+                "ProjectRegroupOk",
+                payload=inline_serializer(
+                    "ProjectRegroupData",
+                    fields={
+                        "dry_run": serializers.BooleanField(),
+                        "project_id": serializers.UUIDField(),
+                        "events_reprocessed": serializers.IntegerField(),
+                        "groups_before": serializers.IntegerField(),
+                        "groups_after": serializers.IntegerField(),
+                        "groups_consolidated": serializers.IntegerField(),
+                    },
+                ),
+            ),
+            401: envelope_schema("ProjectRegroupUnauthorized", error=True),
+            403: envelope_schema("ProjectRegroupForbidden", error=True),
+            404: envelope_schema("ProjectRegroupNotFound", error=True),
+        },
+    )
+    def post(self, request, pk):
+        project = get_project_for_user(pk, request.user)
+        if project is None:
+            raise NotFound(PROJECT_NOT_FOUND)
+        dry_run = (
+            bool(request.data.get("dry_run", False))
+            if isinstance(request.data, dict)
+            else False
+        )
+        result = regroup_project_error_groups(
+            project, actor=request.user, dry_run=dry_run
+        )
+        return api_success(data=result)
+
+
 class ProjectApiKeyListView(APIView):
     """GET/POST /api/v1/projects/{project_id}/keys/
 
@@ -548,6 +610,7 @@ __all__ = [
     "ProjectDetailView",
     "ProjectListView",
     "ProjectRotateKeyView",
+    "ProjectRegroupErrorsView",
     "ProjectApiKeyListView",
     "ProjectApiKeyDetailView",
     "ProjectApiKeyRotateView",

@@ -34,6 +34,11 @@ class EventInputSerializer(serializers.Serializer):
     )
     metadata = serializers.JSONField(required=False, default=dict)
     breadcrumbs = serializers.JSONField(required=False, default=list)
+    frames = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        default=list,
+    )
 
     def validate(self, attrs):
         validate_payload_size(attrs["message"], attrs.get("stacktrace", ""))
@@ -59,6 +64,7 @@ class EventOutputSerializer(serializers.ModelSerializer):
             "metadata",
             "breadcrumbs",
             "fingerprint",
+            "fingerprint_version",
             "created_at",
         ]
         read_only_fields = fields
@@ -76,6 +82,7 @@ class ErrorGroupOutputSerializer(serializers.ModelSerializer):
             "id",
             "project",
             "fingerprint",
+            "fingerprint_version",
             "title",
             "count",
             "first_seen",

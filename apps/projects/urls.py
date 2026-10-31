@@ -13,6 +13,11 @@ urlpatterns = [
         name="rotate-key",
     ),
     path(
+        "<uuid:pk>/regroup/",
+        views.ProjectRegroupErrorsView.as_view(),
+        name="regroup",
+    ),
+    path(
         "<uuid:project_id>/keys/",
         views.ProjectApiKeyListView.as_view(),
         name="keys-list",

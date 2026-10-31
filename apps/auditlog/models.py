@@ -12,6 +12,7 @@ class AuditAction(models.TextChoices):
     MEMBER_REMOVED = "member_removed", "Member removed"
     INCIDENT_RESOLVED = "incident_resolved", "Incident resolved"
     INCIDENTS_BULK_UPDATED = "incidents_bulk_updated", "Incidents bulk updated"
+    GROUPS_REGROUPED = "groups_regrouped", "Error groups regrouped"
 
 
 class AuditLog(UUIDModel):

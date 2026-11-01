@@ -122,3 +122,57 @@ def bulk_update_incidents(
         )
         updated.append(res)
     return updated
+
+
+def verify_incident_fix(
+    incident: Incident,
+    *,
+    release: str,
+    commit_sha: str = "",
+    notes: str = "",
+    actor=None,
+    auto_resolve: bool = False,
+) -> Incident:
+    """Transition an incident to FIX_VERIFIED (or auto-resolve) with deploy evidence."""
+    target_status = (
+        Incident.Status.RESOLVED if auto_resolve else Incident.Status.FIX_VERIFIED
+    )
+    incident.status = target_status
+    if auto_resolve:
+        incident.resolved_at = timezone.now()
+    else:
+        incident.resolved_at = None
+    incident.save(update_fields=["status", "resolved_at"])
+
+    msg = f"Fix verified in release {release}"
+    details = []
+    if commit_sha:
+        details.append(f"commit: {commit_sha[:10]}")
+    if notes:
+        details.append(notes)
+    if auto_resolve:
+        details.append("auto-resolved")
+    if details:
+        msg = f"{msg} ({', '.join(details)})"
+
+    TimelineEntry.objects.create(
+        incident=incident,
+        kind=TimelineEntry.Kind.STATUS_CHANGE,
+        content=msg[:1000],
+        actor=actor,
+    )
+
+    from apps.notifications.services import notify_incident_updated
+    from apps.realtime.services import publish_incident_event
+
+    publish_incident_event(
+        incident,
+        event_name="incident.updated",
+    )
+    notify_incident_updated(
+        incident,
+        actor_id=actor.pk if actor else None,
+        changes=[f"status → {target_status}", msg],
+    )
+    return incident
+

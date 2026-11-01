@@ -62,6 +62,14 @@ class IncidentOutputSerializer(serializers.ModelSerializer):
     assigned_to_email = serializers.EmailField(
         source="assigned_to.email", read_only=True, allow_null=True
     )
+    deploy_intelligence = serializers.SerializerMethodField()
+
+    @extend_schema_field(serializers.JSONField(allow_null=True))
+    def get_deploy_intelligence(self, incident):
+        if not self.context.get("include_deploy_intelligence"):
+            return None
+        from apps.incidents.selectors import get_incident_deploy_intelligence
+        return get_incident_deploy_intelligence(incident)
 
     @extend_schema_field(EventSummarySerializer(allow_null=True))
     def get_latest_event(self, incident):
@@ -89,6 +97,7 @@ class IncidentOutputSerializer(serializers.ModelSerializer):
             "created_at",
             "resolved_at",
             "latest_event",
+            "deploy_intelligence",
         ]
         read_only_fields = fields
 
@@ -119,6 +128,19 @@ class IncidentUpdateSerializer(serializers.Serializer):
             self.fields["assigned_to"].queryset = User.objects.filter(
                 memberships__organization_id=organization_id
             )
+
+
+class VerifyFixInputSerializer(serializers.Serializer):
+    """POST /api/v1/incidents/{id}/verify-fix/ — verify fix against a release."""
+
+    release = serializers.CharField(max_length=128)
+    commit_sha = serializers.CharField(
+        required=False, allow_blank=True, max_length=64, default=""
+    )
+    notes = serializers.CharField(
+        required=False, allow_blank=True, default=""
+    )
+    auto_resolve = serializers.BooleanField(required=False, default=False)
 
 
 class TimelineEntryOutputSerializer(serializers.Serializer):

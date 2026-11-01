@@ -32,6 +32,9 @@ class EventInputSerializer(serializers.Serializer):
     ip_address = serializers.CharField(
         required=False, allow_blank=True, max_length=64, default=""
     )
+    release = serializers.CharField(
+        required=False, allow_blank=True, max_length=128, default=""
+    )
     metadata = serializers.JSONField(required=False, default=dict)
     breadcrumbs = serializers.JSONField(required=False, default=list)
     frames = serializers.ListField(
@@ -61,6 +64,7 @@ class EventOutputSerializer(serializers.ModelSerializer):
             "request_method",
             "user_id",
             "ip_address",
+            "release",
             "metadata",
             "breadcrumbs",
             "fingerprint",

@@ -35,8 +35,14 @@ from .serializers import (
     IncidentOutputSerializer,
     IncidentUpdateSerializer,
     TimelineEntryOutputSerializer,
+    VerifyFixInputSerializer,
 )
-from .services import add_comment, bulk_update_incidents, update_incident
+from .services import (
+    add_comment,
+    bulk_update_incidents,
+    update_incident,
+    verify_incident_fix,
+)
 
 INCIDENT_NOT_FOUND = "This incident does not exist."
 
@@ -252,7 +258,11 @@ class IncidentDetailView(APIView):
         return api_success(
             data={
                 "incident": IncidentOutputSerializer(
-                    incident, context={"events": events}
+                    incident,
+                    context={
+                        "events": events,
+                        "include_deploy_intelligence": True,
+                    },
                 ).data
             }
         )
@@ -309,7 +319,11 @@ class IncidentDetailView(APIView):
         return api_success(
             data={
                 "incident": IncidentOutputSerializer(
-                    incident, context={"events": events}
+                    incident,
+                    context={
+                        "events": events,
+                        "include_deploy_intelligence": True,
+                    },
                 ).data
             }
         )
@@ -473,7 +487,48 @@ class IncidentResolveView(APIView):
         return api_success(
             data={
                 "incident": IncidentOutputSerializer(
-                    incident, context={"events": events}
+                    incident,
+                    context={
+                        "events": events,
+                        "include_deploy_intelligence": True,
+                    },
+                ).data
+            }
+        )
+
+
+class VerifyFixView(APIView):
+    """POST /api/v1/incidents/{id}/verify-fix/ — verify fix in release with deploy evidence."""
+
+    permission_classes = [IsAuthenticated, IsIncidentDeveloperOrAbove]
+
+    def post(self, request, incident_id: UUID):
+        incident = get_incident_for_user(incident_id, request.user)
+        if incident is None:
+            raise NotFound(INCIDENT_NOT_FOUND)
+
+        serializer = VerifyFixInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        updated = verify_incident_fix(
+            incident,
+            release=data["release"],
+            commit_sha=data.get("commit_sha", ""),
+            notes=data.get("notes", ""),
+            actor=request.user,
+            auto_resolve=data.get("auto_resolve", False),
+        )
+
+        events = latest_events_by_id([updated])
+        return api_success(
+            data={
+                "incident": IncidentOutputSerializer(
+                    updated,
+                    context={
+                        "events": events,
+                        "include_deploy_intelligence": True,
+                    },
                 ).data
             }
         )
@@ -858,6 +913,7 @@ class IncidentBulkView(APIView):
                 "resolved": Incident.Status.RESOLVED,
                 "open": Incident.Status.OPEN,
                 "investigating": Incident.Status.INVESTIGATING,
+                "fix_verified": Incident.Status.FIX_VERIFIED,
                 "ignored": Incident.Status.IGNORED,
             }
             status_val = action_map.get(str(action).lower())

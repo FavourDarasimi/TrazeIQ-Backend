@@ -11,6 +11,7 @@ from .views import (
     IncidentListView,
     IncidentResolveView,
     IncidentTimelineView,
+    VerifyFixView,
 )
 
 urlpatterns = [
@@ -55,5 +56,10 @@ urlpatterns = [
         "<uuid:incident_id>/resolve/",
         IncidentResolveView.as_view(),
         name="incident-resolve",
+    ),
+    path(
+        "<uuid:incident_id>/verify-fix/",
+        VerifyFixView.as_view(),
+        name="incident-verify-fix",
     ),
 ]

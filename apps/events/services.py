@@ -71,8 +71,55 @@ def _upsert_error_group(project, fp, title, now, fingerprint_version=2):
         )
 
 
-def _reuse_open_incident(group, project, level):
-    """Reuse the group's open Incident, tolerating concurrent creation."""
+def _reuse_open_incident(group, project, level, release="", endpoint=""):
+    """Reuse the group's active Incident, or auto-reopen a resolved/fix_verified one."""
+    # 1. Reuse existing open or investigating incident
+    active = (
+        Incident.objects.filter(
+            error_group=group,
+            status__in=[Incident.Status.OPEN, Incident.Status.INVESTIGATING],
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if active is not None:
+        return (active, False)
+
+    # 2. Reopen a previously resolved or fix_verified incident when error returns
+    past_incident = (
+        Incident.objects.filter(
+            error_group=group,
+            status__in=[Incident.Status.RESOLVED, Incident.Status.FIX_VERIFIED],
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if past_incident is not None:
+        past_incident.status = Incident.Status.OPEN
+        past_incident.resolved_at = None
+        past_incident.save(update_fields=["status", "resolved_at"])
+
+        rel_text = f" in release {release}" if release else ""
+        ep_text = f" (endpoint: {endpoint})" if endpoint else ""
+        msg = f"Automatically reopened: error re-occurred{rel_text}{ep_text}"
+
+        from apps.incidents.models import TimelineEntry
+        TimelineEntry.objects.create(
+            incident=past_incident,
+            kind=TimelineEntry.Kind.STATUS_CHANGE,
+            content=msg[:1000],
+            actor=None,
+        )
+
+        from apps.notifications.services import notify_incident_updated
+        notify_incident_updated(
+            past_incident,
+            actor_id=None,
+            changes=["status → open", msg],
+        )
+        return (past_incident, False)
+
+    # 3. First occurrence for this group: get-or-create open incident
     for attempt in range(_GROUP_UPSERT_ATTEMPTS):
         try:
             return Incident.objects.get_or_create(
@@ -82,8 +129,6 @@ def _reuse_open_incident(group, project, level):
                 defaults={"severity": severity_from_level(level)},
             )
         except IntegrityError:
-            # Lost the race for the open incident
-            # (`uniq_open_incident_per_group`) — reuse the winner.
             try:
                 return (
                     Incident.objects.get(
@@ -92,9 +137,9 @@ def _reuse_open_incident(group, project, level):
                     False,
                 )
             except Incident.DoesNotExist:
-                pass  # winner rolled back — retry below
+                pass
         except OperationalError:
-            pass  # lock/snapshot conflict — retry below
+            pass
         time.sleep(_GROUP_UPSERT_RETRY_BASE_SECONDS * (2**attempt))
     return Incident.objects.get_or_create(
         error_group=group,
@@ -117,6 +162,7 @@ def ingest_event(
     request_method: str = "",
     user_id: str = "",
     ip_address: str = "",
+    release: str = "",
     metadata: dict | None = None,
     breadcrumbs: list | None = None,
 ) -> Event:
@@ -154,7 +200,9 @@ def ingest_event(
         count=F("count") + 1, last_seen=now
     )
 
-    incident, _created = _reuse_open_incident(group, project, level)
+    incident, _created = _reuse_open_incident(
+        group, project, level, release=release, endpoint=endpoint
+    )
 
     if _created:
         from apps.notifications.services import notify_incident_created
@@ -178,6 +226,7 @@ def ingest_event(
         request_method=request_method,
         user_id=user_id,
         ip_address=ip_address,
+        release=release,
         metadata=meta,
         breadcrumbs=breadcrumbs or [],
         fingerprint=fp,

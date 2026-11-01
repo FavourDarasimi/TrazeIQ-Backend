@@ -1,5 +1,6 @@
 from django.urls import path
 
+from apps.deployments.views import ProjectDeploymentsView, ProjectReleasesView
 from . import views
 
 app_name = "projects"
@@ -31,5 +32,15 @@ urlpatterns = [
         "<uuid:project_id>/keys/<uuid:key_id>/rotate/",
         views.ProjectApiKeyRotateView.as_view(),
         name="keys-rotate",
+    ),
+    path(
+        "<uuid:project_id>/deployments/",
+        ProjectDeploymentsView.as_view(),
+        name="deployments-list",
+    ),
+    path(
+        "<uuid:project_id>/releases/",
+        ProjectReleasesView.as_view(),
+        name="releases-list",
     ),
 ]

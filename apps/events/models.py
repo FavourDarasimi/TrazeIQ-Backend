@@ -73,6 +73,9 @@ class Event(UUIDModel):
     request_method = models.CharField(max_length=16, blank=True, default="")
     user_id = models.CharField(max_length=128, blank=True, default="")
     ip_address = models.CharField(max_length=64, blank=True, default="")
+    release = models.CharField(
+        max_length=128, blank=True, default="", db_index=True
+    )
     metadata = models.JSONField(blank=True, default=dict)
     breadcrumbs = models.JSONField(blank=True, default=list)
     fingerprint = models.CharField(max_length=64, db_index=True)
@@ -85,6 +88,10 @@ class Event(UUIDModel):
             models.Index(
                 fields=["project", "created_at"],
                 name="idx_event_project_created",
+            ),
+            models.Index(
+                fields=["project", "release"],
+                name="idx_event_project_release",
             ),
             GinIndex(
                 fields=["metadata"],

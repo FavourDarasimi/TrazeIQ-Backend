@@ -25,6 +25,7 @@ class Incident(UUIDModel):
     class Status(models.TextChoices):
         OPEN = "open", "Open"
         INVESTIGATING = "investigating", "Investigating"
+        FIX_VERIFIED = "fix_verified", "Fix verified"
         RESOLVED = "resolved", "Resolved"
         IGNORED = "ignored", "Ignored"
 

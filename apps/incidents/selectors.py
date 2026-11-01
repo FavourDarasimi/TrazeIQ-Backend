@@ -1,9 +1,11 @@
 """Read-side queries for incidents — every queryset is membership-scoped
 (Agent.md rule 2)."""
 
+from datetime import timedelta
 from uuid import UUID
 
 from django.db.models import OuterRef, Q, QuerySet, Subquery
+from django.utils import timezone
 
 from apps.events.models import Event
 from apps.platform.search_parser import build_incident_search_q
@@ -179,3 +181,141 @@ def list_incident_timeline(incident) -> list[dict]:
     ]
     rows.sort(key=lambda row: row["created_at"])
     return rows
+
+
+def get_incident_deploy_intelligence(incident: Incident) -> dict:
+    """Analyze and correlate the incident with recent deployments to detect regressions.
+
+    Returns suspect release/commits, first seen time, error rate before/after deploy,
+    and affected endpoints with confidence scoring.
+    """
+    from apps.deployments.models import Deployment
+
+    error_group = incident.error_group
+    project = incident.project
+
+    first_event = (
+        Event.objects.filter(error_group=error_group)
+        .order_by("created_at")
+        .first()
+    )
+
+    correlated_deploy = None
+    confidence = "low"
+
+    # 1. Match deployment by first event's explicit release if present
+    if first_event and first_event.release:
+        correlated_deploy = (
+            Deployment.objects.filter(
+                project=project,
+                release__version=first_event.release,
+            )
+            .select_related("release")
+            .order_by("-deployed_at")
+            .first()
+        )
+        if correlated_deploy:
+            confidence = "high"
+
+    # 2. Fall back to the latest completed deployment prior to or around group first_seen (within 48h)
+    if correlated_deploy is None and error_group and error_group.first_seen:
+        cutoff = error_group.first_seen - timedelta(hours=48)
+        correlated_deploy = (
+            Deployment.objects.filter(
+                project=project,
+                deployed_at__lte=error_group.first_seen,
+                deployed_at__gte=cutoff,
+                status__in=[Deployment.Status.COMPLETED, Deployment.Status.HEALTHY],
+            )
+            .select_related("release")
+            .order_by("-deployed_at")
+            .first()
+        )
+        if correlated_deploy:
+            delta_seconds = (error_group.first_seen - correlated_deploy.deployed_at).total_seconds()
+            if delta_seconds <= 7200:  # within 2 hours
+                confidence = "high"
+            elif delta_seconds <= 86400:  # within 24 hours
+                confidence = "medium"
+            else:
+                confidence = "low"
+
+    if correlated_deploy is None:
+        return {
+            "has_regression": False,
+            "likely_release": None,
+            "first_seen": error_group.first_seen.isoformat() if error_group and error_group.first_seen else None,
+            "affected_endpoints": [],
+            "error_rate_before": 0.0,
+            "error_rate_after": 0.0,
+            "events_count_before": 0,
+            "events_count_after": 0,
+            "rate_change_percent": 0.0,
+            "confidence": "low",
+        }
+
+    rel = correlated_deploy.release
+    t_deploy = correlated_deploy.deployed_at
+    now = timezone.now()
+
+    # Calculate error rate in 1-hour window before vs 1-hour window after
+    before_start = t_deploy - timedelta(hours=1)
+    before_end = t_deploy
+    after_start = t_deploy
+    after_end = min(t_deploy + timedelta(hours=1), now)
+
+    events_before = Event.objects.filter(
+        error_group=error_group,
+        created_at__gte=before_start,
+        created_at__lt=before_end,
+    ).count()
+
+    events_after = Event.objects.filter(
+        error_group=error_group,
+        created_at__gte=after_start,
+        created_at__lte=after_end,
+    ).count()
+
+    hours_before = 1.0
+    hours_after = max(0.01, (after_end - after_start).total_seconds() / 3600.0)
+
+    rate_before = round(events_before / hours_before, 2)
+    rate_after = round(events_after / hours_after, 2)
+
+    if events_before == 0:
+        rate_change = 100.0 if events_after > 0 else 0.0
+    else:
+        rate_change = round(((rate_after - rate_before) / rate_before) * 100, 1)
+
+    # Distinct affected endpoints
+    endpoints = list(
+        Event.objects.filter(error_group=error_group)
+        .exclude(endpoint="")
+        .values_list("endpoint", flat=True)
+        .distinct()[:10]
+    )
+
+    return {
+        "has_regression": True,
+        "likely_release": {
+            "id": str(rel.pk),
+            "version": rel.version,
+            "commit_sha": rel.commit_sha,
+            "commit_message": rel.commit_message,
+            "commit_author": rel.commit_author,
+            "commit_url": rel.commit_url,
+            "pull_request_url": rel.pull_request_url,
+            "pull_request_title": rel.pull_request_title,
+            "deployed_at": t_deploy.isoformat(),
+            "environment": correlated_deploy.environment,
+        },
+        "first_seen": error_group.first_seen.isoformat() if error_group and error_group.first_seen else None,
+        "affected_endpoints": endpoints,
+        "error_rate_before": rate_before,
+        "error_rate_after": rate_after,
+        "events_count_before": events_before,
+        "events_count_after": events_after,
+        "rate_change_percent": rate_change,
+        "confidence": confidence,
+    }
+

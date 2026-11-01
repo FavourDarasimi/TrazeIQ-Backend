@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "apps.organizations",
     "apps.projects",
     "apps.events",
+    "apps.deployments",
     "apps.incidents",
     "apps.alerts",
     "apps.integrations",
